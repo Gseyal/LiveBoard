@@ -1,0 +1,85 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-color: #f0f2f5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+#mode-toggle {
+    padding: 12px 24px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    border: 2px solid #ccc;
+    border-radius: 8px;
+    background-color: white;
+    transition: all 0.2s;
+}
+
+#notebook-container {
+    width: 800px;
+    height: 80vh; /* Fixed height so the window itself scrolls */
+    margin: 0 auto;
+    background: white;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    border-radius: 8px;
+    overflow-y: auto; /* The container handles the scrolling */
+    position: relative;
+}
+
+#scroll-wrapper {
+    position: relative; /* The anchor for our absolute canvas */
+    min-height: 100%;
+}
+
+/* Layer 1: Text Styling */
+#text-layer {
+    width: 100%;
+    min-height: 100%; /* Stretches as you type */
+    padding: 40px;
+    font-size: 18px;
+    line-height: 1.6;
+    outline: none; /* Removes the ugly blue border when clicking */
+    white-space: pre-wrap; /* Ensures 'Enter' key pushes text down correctly */
+}
+
+#text-layer:empty:before {
+    content: attr(data-placeholder);
+    color: #aaa;
+}
+
+/* Layer 2: Ink Styling */
+#ink-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    /* Height is set dynamically by JavaScript based on text length */
+    pointer-events: none; /* Let clicks pass THROUGH the canvas to the text below */
+}
+
+/* --- THE TOGGLE LOGIC --- */
+/* When this class is active, the canvas catches the mouse/pencil */
+.ipad-mode #ink-layer {
+    pointer-events: auto; 
+    cursor: crosshair;
+}
+
+/* Optional: Stop text from being highlighted while drawing */
+.ipad-mode #text-layer {
+    pointer-events: none; 
+    user-select: none;
+}
+
+/* When this class is active, the canvas catches the mouse/pencil */
+.ipad-mode #ink-layer {
+    pointer-events: auto; 
+    cursor: crosshair;
+    
+    /* THE FIX: This stops the iPad from scrolling or refreshing when you draw up/down */
+    touch-action: none; 
+}
