@@ -1,29 +1,95 @@
+// --- 1. SOCKET.IO SETUP ---
+// Dynamically connect using the laptop's Wi-Fi IP address
+const socket = io(`http://${window.location.hostname}:3000`);
+
+// --- 2. DOM ELEMENTS & STATE ---
 const canvas = document.getElementById('ink-layer');
 const ctx = canvas.getContext('2d');
 const scrollWrapper = document.getElementById('scroll-wrapper');
 const textLayer = document.getElementById('text-layer');
 const container = document.getElementById('notebook-container');
 const toggleBtn = document.getElementById('mode-toggle');
+const clearBtn = document.getElementById('clear-btn');
 
-// --- 1. THE INK DATABASE (Memory) ---
-let allStrokes = []; // Stores every finished line
-let currentStroke = []; // Stores the line you are currently drawing
+let allStrokes = [];
 
-// --- 2. CANVAS SETUP & REDRAW LOGIC ---
+// --- 3. THE SYNC ENGINE (RECEIVING) ---
+
+// A. Initial Load / Full Replacements (Clearing)
+socket.on('init-data', (data) => {
+    if (data.text) textLayer.innerHTML = data.text;
+    if (data.strokes) allStrokes = data.strokes;
+    resizeAndRedrawCanvas();
+});
+
+socket.on('receive-strokes', (fullArray) => {
+    allStrokes = fullArray;
+    resizeAndRedrawCanvas();
+});
+
+// B. Receive Text
+socket.on('receive-text', (newText) => {
+    if (document.activeElement !== textLayer) {
+        textLayer.innerHTML = newText;
+        resizeAndRedrawCanvas();
+    }
+});
+
+// C. Receive Batch Strokes (When other device pauses)
+socket.on('receive-stroke-batch', (batch) => {
+    allStrokes.push(...batch);
+    resizeAndRedrawCanvas();
+});
+
+// --- 4. THE SYNC ENGINE (SENDING TEXT) ---
+let typingTimer;
+textLayer.addEventListener('input', () => {
+    resizeAndRedrawCanvas(); 
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => {
+        socket.emit('update-text', textLayer.innerHTML);
+    }, 500); 
+});
+
+// --- 5. LIVE STREAMING RECEIVERS (Visual Illusion) ---
+let remoteX = 0;
+let remoteY = 0;
+
+socket.on('remote-start-stream', (coords) => {
+    remoteX = coords.x;
+    remoteY = coords.y;
+});
+
+socket.on('remote-stream-point', (coords) => {
+    ctx.beginPath();
+    ctx.moveTo(remoteX, remoteY);
+    ctx.lineTo(coords.x, coords.y);
+    ctx.stroke();
+    remoteX = coords.x;
+    remoteY = coords.y;
+});
+
+// --- 6. CLEAR INK LOGIC ---
+clearBtn.addEventListener('click', () => {
+    if (confirm("Are you sure you want to clear all ink?")) {
+        allStrokes = []; 
+        resizeAndRedrawCanvas(); 
+        socket.emit('update-strokes', []); 
+    }
+});
+
+// --- 7. CANVAS RENDERING LOGIC ---
 function resizeAndRedrawCanvas() {
-    // Resize canvas to match the full height of the text (even the hidden scrolled parts)
     canvas.width = scrollWrapper.clientWidth;
     canvas.height = scrollWrapper.scrollHeight; 
     
-    // Resizing a canvas clears it, so we must reapply our pen styles
-    ctx.strokeStyle = 'rgba(0, 110, 255, 0.8)'; // Nice pen blue
+    ctx.strokeStyle = 'rgba(0, 110, 255, 0.8)';
     ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Loop through memory and redraw all saved strokes
     allStrokes.forEach(stroke => {
-        if (stroke.length === 0) return;
+        if (!stroke || stroke.length === 0) return;
         ctx.beginPath();
         ctx.moveTo(stroke[0].x, stroke[0].y);
         for (let i = 1; i < stroke.length; i++) {
@@ -32,18 +98,10 @@ function resizeAndRedrawCanvas() {
         ctx.stroke();
     });
 }
-
-// Keep canvas synced when window resizes OR when user types (which expands the page)
 window.addEventListener('resize', resizeAndRedrawCanvas);
-textLayer.addEventListener('input', resizeAndRedrawCanvas);
 
-// Initialize
-resizeAndRedrawCanvas(); 
-
-
-// --- 3. DEVICE MODE TOGGLE ---
+// --- 8. DEVICE MODE TOGGLE ---
 let isIpadMode = false;
-
 toggleBtn.addEventListener('click', () => {
     isIpadMode = !isIpadMode;
     if (isIpadMode) {
@@ -61,60 +119,93 @@ toggleBtn.addEventListener('click', () => {
     }
 });
 
-
-// --- 4. INTERACTIVE DRAWING ENGINE ---
+// --- 9. INTERACTIVE DRAWING ENGINE ---
 let isDrawing = false;
-let lastX = 0;
-let lastY = 0;
+let lastX = 0, lastY = 0;
+let currentStroke = [];
 
-// This calculates the exact mouse position relative to the canvas, accounting for scroll!
 function getCoordinates(e) {
     const rect = canvas.getBoundingClientRect();
-    return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
-    };
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
 }
 
-function startDrawing(e) {
-    if (!isIpadMode) return;
+canvas.addEventListener('pointerdown', (e) => {
+    // Palm Rejection
+    if (!isIpadMode || (e.pointerType === 'touch')) return;
+    
     isDrawing = true;
     const coords = getCoordinates(e);
-    lastX = coords.x;
-    lastY = coords.y;
-    currentStroke = [{ x: lastX, y: lastY }]; // Start a fresh stroke in memory
-}
+    lastX = coords.x; lastY = coords.y;
+    currentStroke = [{ x: lastX, y: lastY }];
 
-function draw(e) {
-    if (!isDrawing || !isIpadMode) return;
+    socket.emit('start-stream', { x: lastX, y: lastY });
+});
+
+canvas.addEventListener('pointermove', (e) => {
+    if (!isDrawing || !isIpadMode || (e.pointerType === 'touch')) return;
+    
     const coords = getCoordinates(e);
-
-    // Visually draw the ink on the screen
     ctx.beginPath();
     ctx.moveTo(lastX, lastY);
     ctx.lineTo(coords.x, coords.y);
     ctx.stroke();
-
-    // Save this point to our memory array
+    
     currentStroke.push({ x: coords.x, y: coords.y });
+    
+    socket.emit('stream-point', { x: coords.x, y: coords.y });
 
-    lastX = coords.x;
-    lastY = coords.y;
-}
+    lastX = coords.x; lastY = coords.y;
+});
 
-function stopDrawing() {
-    if (isDrawing) {
-        isDrawing = false;
-        // The pen lifted! Save the finished stroke to our master database
-        if (currentStroke.length > 0) {
-            allStrokes.push(currentStroke);
+// --- 10. THE IDLE BATCH SENDER (Zero-Lag Fix) ---
+// --- 10. THE IDLE BATCH SENDER (Bulletproof Version) ---
+let strokeBatch = []; 
+let batchSendTimer = null;   
+
+function handlePointerUpOut(e) {
+    // STRICT GUARD: If we aren't currently drawing, ignore this completely.
+    if (!isDrawing) return; 
+    
+    // Ignore palm touches
+    if (e.pointerType === 'touch') return;
+
+    // We are officially lifting the pen.
+    isDrawing = false;
+        
+    if (currentStroke.length > 0) {
+        // 1. Instantly free the pen
+        const strokeToSave = currentStroke;
+        currentStroke = []; 
+        
+        // 2. Save locally
+        async function saveStroke() {
+            await allStrokes.push(strokeToSave);
         }
-        currentStroke = [];
+        saveStroke();
+        
+        // 3. Add to batch box
+        async function addToBatch() {
+            await strokeBatch.push(strokeToSave);
+        }
+        addToBatch();
+        
+        // --- THE TIMER LOGIC ---
+        // Cancel the previous countdown
+        clearTimeout(batchSendTimer);
+        
+        console.log("batc");
+        
+        // Start a fresh 2-second countdown
+        batchSendTimer = setTimeout(() => {
+            if (strokeBatch.length > 0) {
+                console.log("🚀 5 Seconds Idle! Sending batch to network now.");
+                socket.emit('add-stroke-batch', strokeBatch);
+                strokeBatch = []; // Empty the box
+            }
+        }, 5000); 
     }
 }
 
-// Using 'pointer' events supports mouse, touch, AND Apple Pencil automatically
-canvas.addEventListener('pointerdown', startDrawing);
-canvas.addEventListener('pointermove', draw);
-canvas.addEventListener('pointerup', stopDrawing);
-canvas.addEventListener('pointerout', stopDrawing);
+// Ensure these are the ONLY pointerup/pointerout listeners for the canvas in your whole file!
+canvas.addEventListener('pointerup', handlePointerUpOut);
+canvas.addEventListener('pointerout', handlePointerUpOut);

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScribeSync Prototype</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+   <div style="text-align: center; margin: 20px; display: flex; justify-content: center; gap: 15px;">
+        <button id="mode-toggle" style="padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; border: 2px solid #ccc; border-radius: 8px; background-color: white;">
+            Current Mode: Laptop (Typing)
+        </button>
+        
+        <!-- NEW: Clear Button -->
+        <button id="clear-btn" style="padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; border: 2px solid #ef9a9a; border-radius: 8px; background-color: #ffebee; color: #c62828;">
+            🗑️ Clear Ink
+        </button>
+    </div>
+    
+
+    <div id="notebook-container">
+        <div id="scroll-wrapper">
+            <div id="text-layer" contenteditable="true" data-placeholder="Start typing your notes here..."></div>
+            <canvas id="ink-layer"></canvas>
+        </div>
+    </div>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
