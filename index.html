@@ -3,30 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ScribeSync Prototype</title>
+    <title>ScribeSync</title>
     <link rel="stylesheet" href="style.css">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
 
-   <div style="text-align: center; margin: 20px; display: flex; justify-content: center; gap: 15px;">
-        <button id="mode-toggle" style="padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; border: 2px solid #ccc; border-radius: 8px; background-color: white;">
-            Current Mode: Laptop (Typing)
-        </button>
-        
-        <!-- NEW: Clear Button -->
-        <button id="clear-btn" style="padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; border: 2px solid #ef9a9a; border-radius: 8px; background-color: #ffebee; color: #c62828;">
-            🗑️ Clear Ink
-        </button>
+    <div id="toolbar">
+        <div class="tool-group">
+            <!-- REPLACED: Single Export Button -->
+            <button id="export-btn" class="btn">🖨️ Export PDF</button>
+            <span id="current-notebook-name" style="margin-left:10px; font-weight:bold; color:#2196f3; font-size: 13px;">No Project</span>
+        </div>
+
+        <div class="tool-group" style="margin-left: auto; padding-left: 15px; border-left: 2px solid #ccc;">
+            <button id="select-btn" class="btn tool-btn" style="padding: 8px;">🖱️ Select</button>
+            <button id="pen-btn" class="btn tool-btn active" style="padding: 8px;">🖊️ Pen</button>
+            <input type="color" id="pen-color" value="#006eff">
+            <button id="eraser-btn" class="btn tool-btn" style="padding: 8px;">🧽 Eraser</button>
+            <label style="margin-left: 5px;">Size:</label>
+            <input type="range" id="brush-size" min="1" max="50" value="3" style="width: 70px;">
+        </div>
+
+        <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
+            <label>Paper:</label>
+            <select id="page-size">
+                <option value="infinite">Infinite Scroll</option>
+                <option value="a4">A4 Page</option>
+            </select>
+            <select id="bg-color">
+                <option value="white">Light</option>
+                <option value="black">Dark</option>
+            </select>
+        </div>
+
+        <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
+            <button id="mode-toggle" class="btn">💻 Laptop Mode</button>
+            <button id="share-btn" class="btn" style="background:#e8f5e9; border-color:#81c784; color:#2e7d32;">📱 iPad</button>
+            <button id="clear-btn" class="btn clear-btn">🗑️ Clear</button>
+        </div>
     </div>
-    
 
     <div id="notebook-container">
         <div id="scroll-wrapper">
-            <div id="text-layer" contenteditable="true" data-placeholder="Start typing your notes here..."></div>
+            <div id="text-layer" contenteditable="true" data-placeholder="Click here to type, or use the pen to draw..."></div>
             <canvas id="ink-layer"></canvas>
         </div>
     </div>
-    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+
+    <div id="qr-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Connect your iPad</h3>
+            <p>Scan this code with your iPad camera:</p>
+            <div id="qrcode"></div>
+            <input type="text" id="local-url-input" readonly>
+            <button id="copy-url-btn" class="btn" style="margin-top: 10px; width: 100%;">📋 Copy Link</button>
+            <button id="close-modal-btn" class="btn clear-btn" style="margin-top: 10px; width: 100%;">Close</button>
+        </div>
+    </div>
+
     <script src="app.js"></script>
 </body>
 </html>
