@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ScribeSync</title>
     <link rel="stylesheet" href="style.css">
-    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
@@ -14,7 +13,6 @@
 
     <div id="toolbar">
         <div class="tool-group">
-            <!-- REPLACED: Single Export Button -->
             <button id="export-btn" class="btn">🖨️ Export PDF</button>
             <span id="current-notebook-name" style="margin-left:10px; font-weight:bold; color:#2196f3; font-size: 13px;">No Project</span>
         </div>
@@ -24,8 +22,22 @@
             <button id="pen-btn" class="btn tool-btn active" style="padding: 8px;">🖊️ Pen</button>
             <input type="color" id="pen-color" value="#006eff">
             <button id="eraser-btn" class="btn tool-btn" style="padding: 8px;">🧽 Eraser</button>
-            <label style="margin-left: 5px;">Size:</label>
+            <label style="margin-left: 5px;">Size: <span id="brush-size-val">3</span></label>
             <input type="range" id="brush-size" min="1" max="50" value="3" style="width: 70px;">
+        </div>
+
+        <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
+            <button id="zoom-out-btn" class="btn" style="padding: 5px 10px;">➖</button>
+            <span id="zoom-display" style="font-weight:bold; font-size: 13px; width: 45px; text-align: center;">100%</span>
+            <button id="zoom-in-btn" class="btn" style="padding: 5px 10px;">➕</button>
+        </div>
+
+        <!-- MULTI-PAGE CONTROLS (Hidden by default, shown if A4 is selected) -->
+        <div id="pagination-controls" class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc; display: none;">
+            <button id="prev-page-btn" class="btn" style="padding: 5px 10px;">◀</button>
+            <span id="page-display" style="font-weight:bold; font-size: 13px; width: 65px; text-align: center;">Page 1/1</span>
+            <button id="next-page-btn" class="btn" style="padding: 5px 10px;">▶</button>
+            <button id="add-page-btn" class="btn" style="padding: 5px 10px; color: #2196f3; font-weight: bold;">➕ New</button>
         </div>
 
         <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
