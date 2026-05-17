@@ -7,6 +7,7 @@ const socket = io(`http://${serverIP}:3000`);
 
 const canvas = document.getElementById('ink-layer');
 const ctx = canvas.getContext('2d');
+canvas.style.touchAction = 'none';
 const scrollWrapper = document.getElementById('scroll-wrapper');
 const textLayer = document.getElementById('text-layer');
 const container = document.getElementById('notebook-container');
@@ -38,6 +39,7 @@ const pageDisplay = document.getElementById('page-display');
 
 let currentTool = 'pen'; 
 let currentNotebookPath = null;
+let currentProjectFolder = ''; // Store project folder basename from server
 let currentZoom = 1.0;
 let eraserMode = 'delete'; // 'delete' or 'white' 
 
@@ -166,6 +168,7 @@ window.addEventListener('paste', async (e) => {
                     // keep the data URL for broadcasting to remote (browser) clients
                     imgPreview.dataset.dataUrl = dataUrl;
                     let finalSrc = dataUrl;
+                    let assetTag = null;
                     // If running in Electron and a notebook folder is open, save the asset to disk
                     if (isElectron && currentNotebookPath && ipcRenderer) {
                         try {
@@ -173,11 +176,38 @@ window.addEventListener('paste', async (e) => {
                             const fileName = `img-${Date.now()}.jpg`;
                             const savedFileUrl = await ipcRenderer.invoke('fs:saveAsset', currentNotebookPath, fileName, base64);
                             finalSrc = savedFileUrl;
+                            assetTag = fileName;
                             imgPreview.dataset.assetTag = fileName;
-                            imgPreview.dataset.localPath = savedFileUrl;
                         } catch (err) {
                             console.error('Failed to save asset:', err);
                         }
+                    }
+                    // If browser client (not Electron), upload to server endpoint
+                    else if (!isElectron && currentProjectFolder) {
+                        console.log('Browser uploading image. Project folder:', currentProjectFolder);
+                        try {
+                            const fileName = `img-${Date.now()}.jpg`;
+                            const response = await fetch('/upload-asset', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    project: currentProjectFolder, // Use the project folder basename from server
+                                    fileName: fileName,
+                                    base64Data: dataUrl
+                                })
+                            });
+                            const data = await response.json();
+                            console.log('Upload response:', data);
+                            if (data.success && data.url) {
+                                finalSrc = data.url;
+                                assetTag = fileName;
+                                imgPreview.dataset.assetTag = fileName;
+                            }
+                        } catch (err) {
+                            console.error('Failed to upload asset:', err);
+                        }
+                    } else if (!isElectron) {
+                        console.log('Browser mode but no project folder set. currentProjectFolder:', currentProjectFolder);
                     }
                     imgPreview.src = finalSrc; imgPreview.width = baseImgWidth; imgPreview.height = baseImgHeight; imgPreview.style.display = 'block';
                     currentTool = 'image-placer'; penBtn.classList.remove('active'); eraserBtn.classList.remove('active'); selectBtn.classList.remove('active');
@@ -358,6 +388,10 @@ socket.on('load-full-state', (state) => {
     applyPageSettings(state.settings.theme, state.settings.pageSize, state.settings.canvasHeight, state.settings.projectName);
     loadPage(state.currentPageIndex, true);
 });
+socket.on('set-project-folder', (folderName) => {
+    console.log('Browser received project folder:', folderName);
+    currentProjectFolder = folderName; // Store project folder for browser uploads
+});
 socket.on('receive-page-settings', (settings) => { applyPageSettings(settings.theme, settings.pageSize, settings.canvasHeight, settings.projectName); });
 socket.on('remote-page-changed', (index) => { loadPage(index, true); });
 socket.on('remote-page-added', (state) => { notebookPages = state.pages; loadPage(state.currentPageIndex, true); });
@@ -389,7 +423,7 @@ function resizeAndRedrawCanvas() {
     allStrokes.forEach((strokeData) => {
         if (!strokeData) return;
         if (strokeData.type === 'image') {
-            const keySrc = (isElectron && strokeData.localPath) ? strokeData.localPath : strokeData.src;
+            const keySrc = strokeData.src;
             if (imageCache[keySrc]) { ctx.globalCompositeOperation = 'destination-over'; ctx.drawImage(imageCache[keySrc], strokeData.x, strokeData.y, strokeData.w, strokeData.h); ctx.globalCompositeOperation = 'source-over'; } 
             else { const img = new Image(); img.onload = () => { imageCache[keySrc] = img; resizeAndRedrawCanvas(); }; img.src = keySrc; }
             return; 
@@ -418,6 +452,7 @@ document.addEventListener('contextmenu', (e) => { if (isIpadMode) e.preventDefau
 canvas.addEventListener('touchstart', (e) => { if (isIpadMode) e.preventDefault(); }, { passive: false });
 
 canvas.addEventListener('pointermove', (e) => {
+    if (isIpadMode && e.pointerType === 'touch') return;
     const coords = getCoordinates(e); currentMouseX = coords.x; currentMouseY = coords.y;
     if (currentTool === 'image-placer' && imgPreview.style.display === 'block') { imgPreview.style.left = (coords.x - imgPreview.width / 2) + 'px'; imgPreview.style.top = (coords.y - imgPreview.height / 2) + 'px'; return; }
     if (currentTool === 'select' && isTransforming) {
@@ -433,16 +468,14 @@ canvas.addEventListener('pointermove', (e) => {
 
 canvas.addEventListener('pointerdown', (e) => {
     if (isIpadMode) e.preventDefault(); 
-    if (!isIpadMode && e.pointerType === 'touch') return;
-    if (isIpadMode && currentTool !== 'select' && currentTool !== 'image-placer' && e.pointerType === 'touch') return; 
+    if ((isIpadMode && e.pointerType === 'touch') || (!isIpadMode && e.pointerType === 'touch')) return;
     
     const coords = getCoordinates(e);
     if (currentTool === 'image-placer') {
         const newImg = {
             type: 'image',
-            // use the data URL as the portable src (works in browsers); localPath is used by Electron renderer when available
-            src: imgPreview.dataset.dataUrl || imgPreview.src,
-            localPath: imgPreview.dataset.localPath || null,
+            // keep a single URL field in the saved stroke object
+            src: imgPreview.src || imgPreview.dataset.dataUrl,
             x: coords.x - imgPreview.width / 2,
             y: coords.y - imgPreview.height / 2,
             w: imgPreview.width,
@@ -476,7 +509,7 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 
 canvas.addEventListener('pointermove', (e) => {
-    if (!isDrawing || !isIpadMode || (e.pointerType === 'touch') || currentTool === 'image-placer' || currentTool === 'select') return;
+    if (!isDrawing || (e.pointerType === 'touch') || currentTool === 'image-placer' || currentTool === 'select') return;
     const coords = getCoordinates(e);
     if (currentStroke.isEraser && eraserMode === 'delete') ctx.globalCompositeOperation = 'destination-out'; else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = currentStroke.color; }
     ctx.lineWidth = currentStroke.size; ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(coords.x, coords.y); ctx.stroke(); ctx.globalCompositeOperation = 'source-over'; 

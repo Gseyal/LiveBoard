@@ -1,7 +1,6 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { pathToFileURL } = require('url');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -14,7 +13,11 @@ const server = http.createServer(expressApp);
 const io = new Server(server, { cors: { origin: "*" } });
 
 expressApp.use(express.static(__dirname));
+expressApp.use(express.json({ limit: '50mb' })); // Allow large base64 images
 
+const projectMap = {};
+
+let currentProjectFolder = ''; // Track current project folder basename
 let currentStrokes = [];
 let currentText = "";
 let currentSettings = { theme: 'white', pageSize: 'infinite', canvasHeight: 5000, projectName: '📁 No Project' };
@@ -24,12 +27,26 @@ let notebookState = {
     settings: currentSettings,
 };
 
+function normalizeNotebookImages(pages) {
+    if (!Array.isArray(pages)) return pages;
+    pages.forEach((page) => {
+        if (!page || !Array.isArray(page.strokes)) return;
+        page.strokes.forEach((stroke) => {
+            if (!stroke || stroke.type !== 'image') return;
+            delete stroke.localPath;
+        });
+    });
+    return pages;
+}
+
 io.on('connection', (socket) => {
+    console.log('[Socket] New client connected. Current project folder:', currentProjectFolder);
     socket.emit('receive-strokes', currentStrokes);
     socket.emit('receive-text', currentText);
     socket.emit('receive-page-settings', currentSettings);
     socket.emit('load-full-state', notebookState);
     socket.emit('receive-active-page', notebookState.pages[notebookState.currentPageIndex] || { strokes: [], text: "" });
+    socket.emit('set-project-folder', currentProjectFolder); // Send project folder to browser clients
 
     socket.on('start-stream', (data) => socket.broadcast.emit('remote-start-stream', data));
     socket.on('stream-point', (data) => socket.broadcast.emit('remote-stream-point', data));
@@ -62,7 +79,7 @@ io.on('connection', (socket) => {
     });
     socket.on('load-full-state', (state) => {
         notebookState = {
-            pages: state.pages || [{ strokes: [], text: "" }],
+            pages: normalizeNotebookImages(state.pages || [{ strokes: [], text: "" }]),
             currentPageIndex: state.currentPageIndex || 0,
             settings: { ...currentSettings, ...(state.settings || {}) },
         };
@@ -75,10 +92,11 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('receive-page-settings', currentSettings);
     });
     socket.on('update-active-page', (pageData) => {
-        notebookState.pages[notebookState.currentPageIndex] = pageData;
-        currentStrokes = pageData.strokes || [];
-        currentText = pageData.text || "";
-        socket.broadcast.emit('receive-active-page', pageData);
+        const normalizedPage = { ...pageData, strokes: normalizeNotebookImages(pageData.strokes ? [{ strokes: pageData.strokes, text: pageData.text || "" }] : [{ strokes: [], text: pageData.text || "" }])[0].strokes };
+        notebookState.pages[notebookState.currentPageIndex] = normalizedPage;
+        currentStrokes = normalizedPage.strokes || [];
+        currentText = normalizedPage.text || "";
+        socket.broadcast.emit('receive-active-page', normalizedPage);
     });
     socket.on('change-page', (index) => {
         notebookState.currentPageIndex = index;
@@ -105,6 +123,58 @@ server.listen(3000, '0.0.0.0', () => {
     console.log('Internal Sync Server is running on Port 3000');
 });
 
+expressApp.get('/notebook-assets/:project/:file', (req, res) => {
+    const folderPath = projectMap[req.params.project];
+    if (!folderPath) return res.status(404).send('Project not found');
+
+    const filePath = path.join(folderPath, 'assets', req.params.file);
+    if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
+
+    return res.sendFile(filePath);
+});
+
+// POST endpoint for browser clients to upload images
+expressApp.post('/upload-asset', (req, res) => {
+    const { project, fileName, base64Data } = req.body;
+    console.log('[Upload] Received request for project:', project, 'file:', fileName);
+    if (!project || !fileName || !base64Data) {
+        console.error('[Upload] Missing parameters. project:', project, 'fileName:', fileName, 'base64Data:', !!base64Data);
+        return res.status(400).json({ error: 'Missing project, fileName, or base64Data' });
+    }
+
+    const folderPath = projectMap[project];
+    console.log('[Upload] Project folder path:', folderPath, 'Project map keys:', Object.keys(projectMap));
+    if (!folderPath) {
+        console.error('[Upload] Project not found in map');
+        return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const assetsDir = path.join(folderPath, 'assets');
+    if (!fs.existsSync(assetsDir)) {
+        fs.mkdirSync(assetsDir, { recursive: true });
+    }
+
+    try {
+        // Remove data:image/...;base64, prefix if present
+        let base64 = base64Data;
+        if (base64.includes(',')) {
+            base64 = base64.split(',')[1];
+        }
+
+        const buffer = Buffer.from(base64, 'base64');
+        const filePath = path.join(assetsDir, fileName);
+        fs.writeFileSync(filePath, buffer);
+        console.log('[Upload] File saved to:', filePath);
+
+        const httpUrl = `http://localhost:3000/notebook-assets/${encodeURIComponent(project)}/${encodeURIComponent(fileName)}`;
+        console.log('[Upload] Returning URL:', httpUrl);
+        res.json({ success: true, url: httpUrl });
+    } catch (err) {
+        console.error('Asset upload failed:', err);
+        res.status(500).json({ error: 'Failed to save asset' });
+    }
+});
+
 // --- ELECTRON APP ---
 app.whenReady().then(() => {
     mainWindow = new BrowserWindow({
@@ -123,13 +193,20 @@ app.whenReady().then(() => {
                         const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] });
                         if (!result.canceled && result.filePaths.length > 0) {
                             currentStrokes = []; currentText = "";
-                            const pName = `📁 ${path.basename(result.filePaths[0])}`;
+                            const folderPath = result.filePaths[0];
+                            const baseName = path.basename(folderPath);
+                            currentProjectFolder = baseName; // Update current project folder
+                            console.log('[Menu] New project opened:', baseName);
+                            projectMap[baseName] = folderPath;
+                            const pName = `📁 ${baseName}`;
                             currentSettings = { theme: 'white', pageSize: 'infinite', canvasHeight: 5000, projectName: pName };
                             notebookState = {
                                 pages: [{ strokes: [], text: "" }],
                                 currentPageIndex: 0,
                                 settings: currentSettings,
                             };
+                            io.sockets.emit('set-project-folder', baseName); // Broadcast to all connected clients
+                            console.log('[Socket] Broadcasting project folder:', baseName);
                             mainWindow.webContents.send('menu-action', { action: 'new', path: result.filePaths[0] });
                         }
                     }
@@ -157,10 +234,17 @@ app.whenReady().then(() => {
                                     notebookState.pages = [{ strokes: currentStrokes, text: currentText }];
                                     notebookState.currentPageIndex = 0;
                                 }
-                                const pName = `📁 ${path.basename(path.dirname(filePath))}`;
+                                const folderPath = path.dirname(filePath);
+                                const baseName = path.basename(folderPath);
+                                currentProjectFolder = baseName; // Update current project folder
+                                console.log('[Menu] Notebook opened:', baseName);
+                                projectMap[baseName] = folderPath;
+                                const pName = `📁 ${baseName}`;
                                 if (parsed.settings) currentSettings = { ...currentSettings, ...parsed.settings, projectName: pName };
                                 else currentSettings.projectName = pName;
                                 notebookState.settings = currentSettings;
+                                io.sockets.emit('set-project-folder', baseName); // Broadcast to all connected clients
+                                console.log('[Socket] Broadcasting project folder:', baseName);
                             } catch (e) { console.error("Error parsing JSON:", e); }
                             mainWindow.webContents.send('menu-action', { action: 'open', data: data, folderPath: path.dirname(filePath), fileName: path.basename(filePath) });
                         }
@@ -181,39 +265,29 @@ app.whenReady().then(() => {
 ipcMain.handle('fs:saveJSON', (event, folderPath, data) => {
     const folderName = path.basename(folderPath);
     try {
-        let parsed = JSON.parse(data);
-        // Embed file:// image assets as base64 data URLs for portability in browsers
-        const extToMime = (ext) => {
-            ext = ext.toLowerCase();
-            if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-            if (ext === '.png') return 'image/png';
-            if (ext === '.gif') return 'image/gif';
-            if (ext === '.webp') return 'image/webp';
-            return 'application/octet-stream';
+        const parsed = JSON.parse(data);
+        const imageUrlFor = (stroke) => {
+            if (!stroke || stroke.type !== 'image') return null;
+            // If src is already a non-base64 URL, keep it
+            if (typeof stroke.src === 'string' && !stroke.src.startsWith('data:')) return stroke.src;
+            // If src is base64 but tag exists, rebuild the HTTP URL from tag
+            if (typeof stroke.tag === 'string' && stroke.tag) {
+                return `http://localhost:3000/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(stroke.tag)}`;
+            }
+            // For browser-only clients, keep the base64 src as-is
+            if (typeof stroke.src === 'string' && stroke.src.startsWith('data:')) return stroke.src;
+            return null;
         };
 
-        if (parsed && Array.isArray(parsed.pages)) {
-            parsed.pages.forEach(page => {
-                if (!page.strokes || !Array.isArray(page.strokes)) return;
+        if (Array.isArray(parsed.pages)) {
+            parsed.pages.forEach((page) => {
+                if (!page || !Array.isArray(page.strokes)) return;
                 page.strokes.forEach((stroke) => {
                     if (!stroke || stroke.type !== 'image') return;
-                    // prefer existing data URLs
-                    if (typeof stroke.src === 'string' && stroke.src.startsWith('data:')) return;
-                    // try localPath then src
-                    const fileUrl = (stroke.localPath && typeof stroke.localPath === 'string') ? stroke.localPath : stroke.src;
-                    if (typeof fileUrl === 'string' && fileUrl.startsWith('file://')) {
-                        try {
-                            const filePath = fileUrl.replace('file://', '');
-                            if (fs.existsSync(filePath)) {
-                                const ext = path.extname(filePath);
-                                const mime = extToMime(ext);
-                                const buf = fs.readFileSync(filePath);
-                                const b64 = buf.toString('base64');
-                                stroke.src = `data:${mime};base64,${b64}`;
-                            }
-                        } catch (e) {
-                            console.error('Failed to embed image for JSON:', e);
-                        }
+                    const url = imageUrlFor(stroke);
+                    if (url) {
+                        stroke.src = url;
+                        delete stroke.localPath;
                     }
                 });
             });
@@ -223,7 +297,6 @@ ipcMain.handle('fs:saveJSON', (event, folderPath, data) => {
         return true;
     } catch (e) {
         console.error('fs:saveJSON error:', e);
-        // fallback: write raw data
         fs.writeFileSync(path.join(folderPath, `${folderName}.json`), data);
         return false;
     }
@@ -236,16 +309,14 @@ ipcMain.handle('fs:savePDF', (event, folderPath, arrayBuffer) => {
 });
 
 ipcMain.handle('fs:saveAsset', (event, folderPath, fileName, base64Data) => {
-    try {
-        const assetsDir = path.join(folderPath, 'assets');
-        if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-        const filePath = path.join(assetsDir, fileName);
-        fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
-        return pathToFileURL(filePath).toString();
-    } catch (e) {
-        console.error('Error saving asset:', e);
-        throw e;
-    }
+    const assetsDir = path.join(folderPath, 'assets');
+    if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+
+    const filePath = path.join(assetsDir, fileName);
+    fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+
+    const folderName = path.basename(folderPath);
+    return `http://localhost:3000/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(fileName)}`;
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
