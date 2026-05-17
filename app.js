@@ -25,8 +25,8 @@ const brushSizeSlider = document.getElementById('brush-size');
 const brushSizeVal = document.getElementById('brush-size-val'); 
 const projectNameDisplay = document.getElementById('current-notebook-name');
 
-// CHANGED: Linked the slider instead of the old buttons
-const zoomSlider = document.getElementById('zoom-slider');
+const zoomInBtn = document.getElementById('zoom-in-btn');
+const zoomOutBtn = document.getElementById('zoom-out-btn');
 const zoomDisplay = document.getElementById('zoom-display');
 
 const paginationControls = document.getElementById('pagination-controls');
@@ -47,16 +47,11 @@ brushSizeSlider.addEventListener('input', (e) => { brushSizeVal.innerText = e.ta
 
 function applyZoom() {
     scrollWrapper.style.transform = `scale(${currentZoom})`;
-    zoomDisplay.innerText = `${Math.round(currentZoom * 100)}%`;
-    // Sync slider position if zooming programmatically
-    zoomSlider.value = Math.round(currentZoom * 100);
+    if(zoomDisplay) zoomDisplay.innerText = `${Math.round(currentZoom * 100)}%`;
 }
 
-// CHANGED: Slider logic
-zoomSlider.addEventListener('input', (e) => { 
-    currentZoom = parseInt(e.target.value, 10) / 100; 
-    applyZoom(); 
-});
+if(zoomInBtn) zoomInBtn.addEventListener('click', () => { if (currentZoom < 3.0) { currentZoom += 0.1; applyZoom(); } });
+if(zoomOutBtn) zoomOutBtn.addEventListener('click', () => { if (currentZoom > 0.3) { currentZoom -= 0.1; applyZoom(); } });
 
 function saveCurrentPageToMemory() {
     notebookPages[currentPageIndex] = { strokes: [...allStrokes], text: textLayer.innerHTML };
@@ -68,26 +63,26 @@ function loadPage(index) {
     allStrokes = notebookPages[currentPageIndex].strokes || [];
     textLayer.innerHTML = notebookPages[currentPageIndex].text || "";
     
-    pageDisplay.innerText = `Page ${currentPageIndex + 1}/${notebookPages.length}`;
+    if(pageDisplay) pageDisplay.innerText = `Page ${currentPageIndex + 1}/${notebookPages.length}`;
     resizeAndRedrawCanvas();
     triggerAutoSave();
 }
 
-prevPageBtn.addEventListener('click', () => {
+if(prevPageBtn) prevPageBtn.addEventListener('click', () => {
     if (currentPageIndex > 0) {
         loadPage(currentPageIndex - 1);
         socket.emit('change-page', currentPageIndex);
     }
 });
 
-nextPageBtn.addEventListener('click', () => {
+if(nextPageBtn) nextPageBtn.addEventListener('click', () => {
     if (currentPageIndex < notebookPages.length - 1) {
         loadPage(currentPageIndex + 1);
         socket.emit('change-page', currentPageIndex);
     }
 });
 
-addPageBtn.addEventListener('click', () => {
+if(addPageBtn) addPageBtn.addEventListener('click', () => {
     saveCurrentPageToMemory();
     notebookPages.push({ strokes: [], text: "" });
     loadPage(notebookPages.length - 1);
@@ -141,32 +136,39 @@ window.addEventListener('paste', (e) => {
     }
 });
 
+// FEATURE ADDED: Allow deleting the selected image with the keyboard
+window.addEventListener('keydown', (e) => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && currentTool === 'select' && selectedItemIndex > -1) {
+        allStrokes.splice(selectedItemIndex, 1);
+        selectedItemIndex = -1;
+        isTransforming = false;
+        resizeAndRedrawCanvas();
+        triggerAutoSave();
+    }
+});
+
 function applyPageSettings(theme, size, canvasHeight, projectName) {
     if (theme) { 
         bgSelect.value = theme; 
         if (theme === 'black') container.classList.add('theme-black'); 
         else container.classList.remove('theme-black'); 
     }
-    
     if (size) { 
         sizeSelect.value = size; 
         if (size === 'a4') { 
             container.classList.add('size-a4'); 
-            paginationControls.style.display = 'flex'; 
+            if(paginationControls) paginationControls.style.display = 'flex'; 
         } else { 
             container.classList.remove('size-a4'); 
-            paginationControls.style.display = 'none'; 
-            
+            if(paginationControls) paginationControls.style.display = 'none'; 
             if (currentPageIndex !== 0) {
                 loadPage(0);
                 socket.emit('change-page', 0);
             }
         } 
     }
-    
     if (canvasHeight && size !== 'a4') { scrollWrapper.style.minHeight = canvasHeight + 'px'; }
     if (projectName) { projectNameDisplay.innerText = projectName; } 
-    
     setTimeout(resizeAndRedrawCanvas, 350); 
     triggerAutoSave(); 
 }
@@ -347,6 +349,10 @@ function resizeAndRedrawCanvas() {
         ctx.strokeStyle = '#2196f3'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]); ctx.strokeRect(img.x, img.y, img.w, img.h); ctx.setLineDash([]); 
         ctx.fillStyle = 'white'; const handleSize = 12; const drawHandle = (x, y) => { ctx.fillRect(x - handleSize/2, y - handleSize/2, handleSize, handleSize); ctx.strokeRect(x - handleSize/2, y - handleSize/2, handleSize, handleSize); };
         drawHandle(img.x, img.y); drawHandle(img.x + img.w, img.y); drawHandle(img.x, img.y + img.h); drawHandle(img.x + img.w, img.y + img.h); 
+        
+        // Draws the Red X badge
+        ctx.fillStyle = '#ff4d4d'; ctx.beginPath(); ctx.arc(img.x + img.w, img.y, 14, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'white'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('✕', img.x + img.w, img.y + 1);
     }
 }
 window.addEventListener('resize', resizeAndRedrawCanvas);
@@ -384,7 +390,21 @@ canvas.addEventListener('pointerdown', (e) => {
 
     if (currentTool === 'select') {
         if (selectedItemIndex > -1) {
-            const img = allStrokes[selectedItemIndex]; const hit = (hx, hy) => coords.x > hx - 15 && coords.x < hx + 15 && coords.y > hy - 15 && coords.y < hy + 15;
+            const img = allStrokes[selectedItemIndex]; 
+            
+            // FEATURE ADDED: Hit detection for the Red 'X' to delete the image
+            const distToX = Math.hypot(coords.x - (img.x + img.w), coords.y - img.y);
+            if (distToX <= 18) { 
+                allStrokes.splice(selectedItemIndex, 1); 
+                selectedItemIndex = -1; 
+                isTransforming = false; 
+                resizeAndRedrawCanvas(); 
+                saveCurrentPageToMemory(); 
+                triggerAutoSave(); 
+                return;
+            }
+            
+            const hit = (hx, hy) => coords.x > hx - 15 && coords.x < hx + 15 && coords.y > hy - 15 && coords.y < hy + 15;
             if (hit(img.x, img.y)) { transformMode = 'resize-nw'; isTransforming = true; return; } if (hit(img.x + img.w, img.y)) { transformMode = 'resize-ne'; isTransforming = true; return; }
             if (hit(img.x, img.y + img.h)) { transformMode = 'resize-sw'; isTransforming = true; return; } if (hit(img.x + img.w, img.y + img.h)) { transformMode = 'resize-se'; isTransforming = true; return; }
             if (coords.x >= img.x && coords.x <= img.x + img.w && coords.y >= img.y && coords.y <= img.y + img.h) { transformMode = 'drag'; isTransforming = true; dragOffsetX = coords.x - img.x; dragOffsetY = coords.y - img.y; return; }
