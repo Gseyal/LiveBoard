@@ -15,6 +15,8 @@ select, input[type="color"] { cursor: pointer; border: 1px solid #ccc; border-ra
 .btn:hover { background-color: #f0f0f0; }
 .clear-btn { background-color: #ffebee; border-color: #ef9a9a; color: #c62828; }
 .clear-btn:hover { background-color: #ffcdd2; }
+.danger-btn { background-color: #fff3e0; border-color: #ffcc80; color: #e65100; }
+.danger-btn:hover { background-color: #ffe0b2; }
 .tool-btn.active { background-color: #e3f2fd; border-color: #2196f3; color: #0d47a1; }
 
 #notebook-container {

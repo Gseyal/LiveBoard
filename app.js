@@ -19,8 +19,10 @@ const bgSelect = document.getElementById('bg-color');
 const exportBtn = document.getElementById('export-btn'); 
 
 const selectBtn = document.getElementById('select-btn'); 
+const deleteSelectedBtn = document.getElementById('delete-selected-btn');
 const penBtn = document.getElementById('pen-btn');
 const eraserBtn = document.getElementById('eraser-btn');
+const eraserModeBtn = document.getElementById('eraser-mode-btn');
 const brushSizeSlider = document.getElementById('brush-size');
 const brushSizeVal = document.getElementById('brush-size-val'); 
 const projectNameDisplay = document.getElementById('current-notebook-name');
@@ -36,7 +38,8 @@ const pageDisplay = document.getElementById('page-display');
 
 let currentTool = 'pen'; 
 let currentNotebookPath = null;
-let currentZoom = 1.0; 
+let currentZoom = 1.0;
+let eraserMode = 'delete'; // 'delete' or 'white' 
 
 let notebookPages = [ { strokes: [], text: "" } ];
 let currentPageIndex = 0;
@@ -121,24 +124,62 @@ scrollWrapper.appendChild(imgPreview);
 let baseImgWidth = 0, baseImgHeight = 0, currentImageScale = 1, currentMouseX = 0, currentMouseY = 0;
 let selectedItemIndex = -1, isTransforming = false, transformMode = null, dragOffsetX = 0, dragOffsetY = 0;
 
-if(selectBtn) selectBtn.addEventListener('click', () => { currentTool = 'select'; selectBtn.classList.add('active'); penBtn.classList.remove('active'); eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; });
-if(penBtn) penBtn.addEventListener('click', () => { currentTool = 'pen'; selectedItemIndex = -1; penBtn.classList.add('active'); selectBtn.classList.remove('active'); eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; resizeAndRedrawCanvas(); });
-if(eraserBtn) eraserBtn.addEventListener('click', () => { currentTool = 'eraser'; selectedItemIndex = -1; eraserBtn.classList.add('active'); penBtn.classList.remove('active'); selectBtn.classList.remove('active'); imgPreview.style.display = 'none'; resizeAndRedrawCanvas(); });
+function deleteSelectedItem() {
+    if (selectedItemIndex < 0 || !allStrokes[selectedItemIndex] || allStrokes[selectedItemIndex].type !== 'image') return;
+    allStrokes.splice(selectedItemIndex, 1);
+    selectedItemIndex = -1;
+    isTransforming = false;
+    transformMode = null;
+    saveCurrentPageToMemory();
+    resizeAndRedrawCanvas();
+    socket.emit('update-active-page', notebookPages[currentPageIndex]);
+    triggerAutoSave();
+}
+
+if(selectBtn) selectBtn.addEventListener('click', () => { currentTool = 'select'; selectBtn.classList.add('active'); penBtn.classList.remove('active'); eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; eraserModeBtn.style.display = 'none'; });
+if(deleteSelectedBtn) deleteSelectedBtn.addEventListener('click', deleteSelectedItem);
+if(penBtn) penBtn.addEventListener('click', () => { currentTool = 'pen'; selectedItemIndex = -1; penBtn.classList.add('active'); selectBtn.classList.remove('active'); eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; eraserModeBtn.style.display = 'none'; resizeAndRedrawCanvas(); });
+if(eraserBtn) eraserBtn.addEventListener('click', () => { currentTool = 'eraser'; selectedItemIndex = -1; eraserBtn.classList.add('active'); penBtn.classList.remove('active'); selectBtn.classList.remove('active'); imgPreview.style.display = 'none'; eraserModeBtn.style.display = 'inline-block'; resizeAndRedrawCanvas(); });
+if(eraserModeBtn) eraserModeBtn.addEventListener('click', () => { eraserMode = eraserMode === 'delete' ? 'white' : 'delete'; eraserModeBtn.innerText = eraserMode === 'delete' ? 'Delete' : 'White'; eraserModeBtn.style.backgroundColor = eraserMode === 'delete' ? '#ffcdd2' : '#fff9c4'; });
 if(colorPicker) colorPicker.addEventListener('input', () => penBtn.click());
 
-window.addEventListener('paste', (e) => {
+document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && currentTool === 'select' && selectedItemIndex > -1 && document.activeElement !== textLayer) {
+        e.preventDefault();
+        deleteSelectedItem();
+    }
+});
+
+window.addEventListener('paste', async (e) => {
     const items = (e.clipboardData || e.originalEvent.clipboardData).items;
     for (let item of items) {
         if (item.type.indexOf('image') !== -1) {
             const blob = item.getAsFile(); const reader = new FileReader();
-            reader.onload = (event) => {
+            reader.onload = async (event) => {
                 const img = new Image();
-                img.onload = () => {
+                img.onload = async () => {
                     const tmpCanvas = document.createElement('canvas'); const MAX_WIDTH = 600; let w = img.width, h = img.height;
                     if (w > MAX_WIDTH) { h = Math.round((h * MAX_WIDTH) / w); w = MAX_WIDTH; }
                     tmpCanvas.width = w; tmpCanvas.height = h; tmpCanvas.getContext('2d').drawImage(img, 0, 0, w, h);
                     baseImgWidth = w; baseImgHeight = h; currentImageScale = 1;
-                    imgPreview.src = tmpCanvas.toDataURL('image/jpeg', 0.8); imgPreview.width = baseImgWidth; imgPreview.height = baseImgHeight; imgPreview.style.display = 'block';
+                    const dataUrl = tmpCanvas.toDataURL('image/jpeg', 0.8);
+                    // keep the data URL for broadcasting to remote (browser) clients
+                    imgPreview.dataset.dataUrl = dataUrl;
+                    let finalSrc = dataUrl;
+                    // If running in Electron and a notebook folder is open, save the asset to disk
+                    if (isElectron && currentNotebookPath && ipcRenderer) {
+                        try {
+                            const base64 = dataUrl.split(',')[1];
+                            const fileName = `img-${Date.now()}.jpg`;
+                            const savedFileUrl = await ipcRenderer.invoke('fs:saveAsset', currentNotebookPath, fileName, base64);
+                            finalSrc = savedFileUrl;
+                            imgPreview.dataset.assetTag = fileName;
+                            imgPreview.dataset.localPath = savedFileUrl;
+                        } catch (err) {
+                            console.error('Failed to save asset:', err);
+                        }
+                    }
+                    imgPreview.src = finalSrc; imgPreview.width = baseImgWidth; imgPreview.height = baseImgHeight; imgPreview.style.display = 'block';
                     currentTool = 'image-placer'; penBtn.classList.remove('active'); eraserBtn.classList.remove('active'); selectBtn.classList.remove('active');
                 };
                 img.src = event.target.result;
@@ -337,7 +378,7 @@ textLayer.addEventListener('input', () => {
 let remoteX = 0, remoteY = 0;
 socket.on('remote-start-stream', (data) => { remoteX = data.x; remoteY = data.y; });
 socket.on('remote-stream-point', (data) => {
-    if (data.isEraser) ctx.globalCompositeOperation = 'destination-out'; else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = data.color; }
+    if (data.isEraser && data.eraserMode === 'delete') ctx.globalCompositeOperation = 'destination-out'; else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = data.color; }
     ctx.lineWidth = data.size || 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.beginPath(); ctx.moveTo(remoteX, remoteY); ctx.lineTo(data.x, data.y); ctx.stroke();
     ctx.globalCompositeOperation = 'source-over'; remoteX = data.x; remoteY = data.y;
@@ -348,12 +389,13 @@ function resizeAndRedrawCanvas() {
     allStrokes.forEach((strokeData) => {
         if (!strokeData) return;
         if (strokeData.type === 'image') {
-            if (imageCache[strokeData.src]) { ctx.globalCompositeOperation = 'destination-over'; ctx.drawImage(imageCache[strokeData.src], strokeData.x, strokeData.y, strokeData.w, strokeData.h); ctx.globalCompositeOperation = 'source-over'; } 
-            else { const img = new Image(); img.onload = () => { imageCache[strokeData.src] = img; resizeAndRedrawCanvas(); }; img.src = strokeData.src; }
+            const keySrc = (isElectron && strokeData.localPath) ? strokeData.localPath : strokeData.src;
+            if (imageCache[keySrc]) { ctx.globalCompositeOperation = 'destination-over'; ctx.drawImage(imageCache[keySrc], strokeData.x, strokeData.y, strokeData.w, strokeData.h); ctx.globalCompositeOperation = 'source-over'; } 
+            else { const img = new Image(); img.onload = () => { imageCache[keySrc] = img; resizeAndRedrawCanvas(); }; img.src = keySrc; }
             return; 
         }
         if (!strokeData.path || strokeData.path.length === 0) return;
-        if (strokeData.isEraser) ctx.globalCompositeOperation = 'destination-out'; else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = strokeData.color; }
+        if (strokeData.isEraser && strokeData.eraserMode === 'delete') ctx.globalCompositeOperation = 'destination-out'; else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = strokeData.color; }
         ctx.lineWidth = strokeData.size || 3;
         ctx.beginPath(); ctx.moveTo(strokeData.path[0].x, strokeData.path[0].y);
         for (let i = 1; i < strokeData.path.length; i++) ctx.lineTo(strokeData.path[i].x, strokeData.path[i].y);
@@ -392,11 +434,21 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerdown', (e) => {
     if (isIpadMode) e.preventDefault(); 
     if (!isIpadMode && e.pointerType === 'touch') return;
-    if (isIpadMode && currentTool !== 'select' && e.pointerType === 'touch') return; 
+    if (isIpadMode && currentTool !== 'select' && currentTool !== 'image-placer' && e.pointerType === 'touch') return; 
     
     const coords = getCoordinates(e);
     if (currentTool === 'image-placer') {
-        const newImg = { type: 'image', src: imgPreview.src, x: coords.x - imgPreview.width / 2, y: coords.y - imgPreview.height / 2, w: imgPreview.width, h: imgPreview.height };
+        const newImg = {
+            type: 'image',
+            // use the data URL as the portable src (works in browsers); localPath is used by Electron renderer when available
+            src: imgPreview.dataset.dataUrl || imgPreview.src,
+            localPath: imgPreview.dataset.localPath || null,
+            x: coords.x - imgPreview.width / 2,
+            y: coords.y - imgPreview.height / 2,
+            w: imgPreview.width,
+            h: imgPreview.height,
+            tag: imgPreview.dataset.assetTag || null
+        };
         allStrokes.push(newImg); saveCurrentPageToMemory(); socket.emit('update-active-page', notebookPages[currentPageIndex]); imgPreview.style.display = 'none'; penBtn.click(); resizeAndRedrawCanvas(); triggerAutoSave(); return; 
     }
 
@@ -418,17 +470,27 @@ canvas.addEventListener('pointerdown', (e) => {
     }
     
     isDrawing = true; lastX = coords.x; lastY = coords.y; const activeColor = colorPicker.value; const isEraser = (currentTool === 'eraser'); const activeSize = parseInt(brushSizeSlider.value, 10);
-    currentStroke = { type: 'stroke', color: activeColor, isEraser: isEraser, size: activeSize, path: [{ x: lastX, y: lastY }] };
-    socket.emit('start-stream', { color: activeColor, isEraser: isEraser, size: activeSize, x: lastX, y: lastY });
+    const eraserColor = eraserMode === 'white' ? '#ffffff' : activeColor;
+    currentStroke = { type: 'stroke', color: eraserColor, isEraser: isEraser, eraserMode: isEraser ? eraserMode : null, size: activeSize, path: [{ x: lastX, y: lastY }] };
+    socket.emit('start-stream', { color: eraserColor, isEraser: isEraser, size: activeSize, x: lastX, y: lastY });
 });
 
 canvas.addEventListener('pointermove', (e) => {
     if (!isDrawing || !isIpadMode || (e.pointerType === 'touch') || currentTool === 'image-placer' || currentTool === 'select') return;
     const coords = getCoordinates(e);
-    if (currentStroke.isEraser) ctx.globalCompositeOperation = 'destination-out'; else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = currentStroke.color; }
+    if (currentStroke.isEraser && eraserMode === 'delete') ctx.globalCompositeOperation = 'destination-out'; else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = currentStroke.color; }
     ctx.lineWidth = currentStroke.size; ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(coords.x, coords.y); ctx.stroke(); ctx.globalCompositeOperation = 'source-over'; 
-    currentStroke.path.push({ x: coords.x, y: coords.y }); socket.emit('stream-point', { color: currentStroke.color, isEraser: currentStroke.isEraser, size: currentStroke.size, x: coords.x, y: coords.y }); lastX = coords.x; lastY = coords.y;
+    currentStroke.path.push({ x: coords.x, y: coords.y }); socket.emit('stream-point', { color: currentStroke.color, isEraser: currentStroke.isEraser, eraserMode: currentStroke.eraserMode, size: currentStroke.size, x: coords.x, y: coords.y }); lastX = coords.x; lastY = coords.y;
 });
+
+function isPointNearPath(point, path, threshold) {
+    for (let i = 0; i < path.length; i++) {
+        const dx = point.x - path[i].x;
+        const dy = point.y - path[i].y;
+        if (Math.sqrt(dx * dx + dy * dy) < threshold) return true;
+    }
+    return false;
+}
 
 let strokeBatch = []; let batchSendTimer = null;   
 function handlePointerUpOut(e) {
@@ -436,7 +498,20 @@ function handlePointerUpOut(e) {
     if (!isDrawing || e.pointerType === 'touch') return;
     isDrawing = false;
     if (currentStroke.path && currentStroke.path.length > 0) {
-        allStrokes.push(currentStroke); strokeBatch.push(currentStroke); currentStroke = {}; triggerAutoSave(); 
+        if (currentStroke.isEraser && eraserMode === 'delete') {
+            const eraserRadius = (currentStroke.size || 3) * 1.5;
+            allStrokes = allStrokes.filter(stroke => {
+                if (stroke.type === 'image') return true;
+                if (!stroke.path) return true;
+                return !stroke.path.some(pt => isPointNearPath(pt, currentStroke.path, eraserRadius));
+            });
+            resizeAndRedrawCanvas();
+            saveCurrentPageToMemory();
+            socket.emit('update-active-page', notebookPages[currentPageIndex]);
+        } else {
+            allStrokes.push(currentStroke); strokeBatch.push(currentStroke);
+        }
+        currentStroke = {}; triggerAutoSave(); 
         clearTimeout(batchSendTimer); batchSendTimer = setTimeout(() => { if (strokeBatch.length > 0) { socket.emit('add-stroke-batch', strokeBatch); strokeBatch = []; } }, 100); 
     }
 }

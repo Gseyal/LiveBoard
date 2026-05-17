@@ -19,9 +19,11 @@
 
         <div class="tool-group" style="margin-left: auto; padding-left: 15px; border-left: 2px solid #ccc;">
             <button id="select-btn" class="btn tool-btn" style="padding: 8px;">🖱️ Select</button>
+            <button id="delete-selected-btn" class="btn tool-btn danger-btn" style="padding: 8px;">🗑️ Delete</button>
             <button id="pen-btn" class="btn tool-btn active" style="padding: 8px;">🖊️ Pen</button>
             <input type="color" id="pen-color" value="#006eff">
             <button id="eraser-btn" class="btn tool-btn" style="padding: 8px;">🧽 Eraser</button>
+            <button id="eraser-mode-btn" class="btn" style="padding: 5px 8px; font-size: 12px; display:none;">Delete</button>
             <label style="margin-left: 5px;">Size: <span id="brush-size-val">3</span></label>
             <input type="range" id="brush-size" min="1" max="50" value="3" style="width: 70px;">
         </div>
