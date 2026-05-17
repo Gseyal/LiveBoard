@@ -25,8 +25,8 @@ const brushSizeSlider = document.getElementById('brush-size');
 const brushSizeVal = document.getElementById('brush-size-val'); 
 const projectNameDisplay = document.getElementById('current-notebook-name');
 
-const zoomInBtn = document.getElementById('zoom-in-btn');
-const zoomOutBtn = document.getElementById('zoom-out-btn');
+// CHANGED: Linked the slider instead of the old buttons
+const zoomSlider = document.getElementById('zoom-slider');
 const zoomDisplay = document.getElementById('zoom-display');
 
 const paginationControls = document.getElementById('pagination-controls');
@@ -48,10 +48,15 @@ brushSizeSlider.addEventListener('input', (e) => { brushSizeVal.innerText = e.ta
 function applyZoom() {
     scrollWrapper.style.transform = `scale(${currentZoom})`;
     zoomDisplay.innerText = `${Math.round(currentZoom * 100)}%`;
+    // Sync slider position if zooming programmatically
+    zoomSlider.value = Math.round(currentZoom * 100);
 }
 
-zoomInBtn.addEventListener('click', () => { currentZoom = Math.min(currentZoom + 0.1, 3.0); applyZoom(); });
-zoomOutBtn.addEventListener('click', () => { currentZoom = Math.max(currentZoom - 0.1, 0.3); applyZoom(); });
+// CHANGED: Slider logic
+zoomSlider.addEventListener('input', (e) => { 
+    currentZoom = parseInt(e.target.value, 10) / 100; 
+    applyZoom(); 
+});
 
 function saveCurrentPageToMemory() {
     notebookPages[currentPageIndex] = { strokes: [...allStrokes], text: textLayer.innerHTML };

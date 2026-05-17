@@ -27,12 +27,11 @@
         </div>
 
         <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
-            <button id="zoom-out-btn" class="btn" style="padding: 5px 10px;">➖</button>
-            <span id="zoom-display" style="font-weight:bold; font-size: 13px; width: 45px; text-align: center;">100%</span>
-            <button id="zoom-in-btn" class="btn" style="padding: 5px 10px;">➕</button>
+            <label>Zoom:</label>
+            <input type="range" id="zoom-slider" min="30" max="300" value="100" style="width: 80px;">
+            <span id="zoom-display" style="font-weight:bold; font-size: 13px; width: 45px; text-align: right;">100%</span>
         </div>
 
-        <!-- MULTI-PAGE CONTROLS (Hidden by default, shown if A4 is selected) -->
         <div id="pagination-controls" class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc; display: none;">
             <button id="prev-page-btn" class="btn" style="padding: 5px 10px;">◀</button>
             <span id="page-display" style="font-weight:bold; font-size: 13px; width: 65px; text-align: center;">Page 1/1</span>
