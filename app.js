@@ -25,8 +25,7 @@ const brushSizeSlider = document.getElementById('brush-size');
 const brushSizeVal = document.getElementById('brush-size-val'); 
 const projectNameDisplay = document.getElementById('current-notebook-name');
 
-const zoomInBtn = document.getElementById('zoom-in-btn');
-const zoomOutBtn = document.getElementById('zoom-out-btn');
+const zoomSlider = document.getElementById('zoom-slider');
 const zoomDisplay = document.getElementById('zoom-display');
 
 const paginationControls = document.getElementById('pagination-controls');
@@ -48,17 +47,26 @@ brushSizeSlider.addEventListener('input', (e) => { brushSizeVal.innerText = e.ta
 function applyZoom() {
     scrollWrapper.style.transform = `scale(${currentZoom})`;
     if(zoomDisplay) zoomDisplay.innerText = `${Math.round(currentZoom * 100)}%`;
+    if(zoomSlider) zoomSlider.value = Math.round(currentZoom * 100);
 }
 
-if(zoomInBtn) zoomInBtn.addEventListener('click', () => { if (currentZoom < 3.0) { currentZoom += 0.1; applyZoom(); } });
-if(zoomOutBtn) zoomOutBtn.addEventListener('click', () => { if (currentZoom > 0.3) { currentZoom -= 0.1; applyZoom(); } });
+if(zoomSlider) {
+    zoomSlider.addEventListener('input', (e) => { 
+        currentZoom = parseInt(e.target.value, 10) / 100; 
+        applyZoom(); 
+    });
+}
 
 function saveCurrentPageToMemory() {
     notebookPages[currentPageIndex] = { strokes: [...allStrokes], text: textLayer.innerHTML };
 }
 
-function loadPage(index) {
-    saveCurrentPageToMemory(); 
+// THE FIX: Added 'skipSave' so the app doesn't overwrite your JSON with a blank canvas
+function loadPage(index, skipSave = false) {
+    if (!skipSave) {
+        saveCurrentPageToMemory(); 
+    }
+    
     currentPageIndex = index;
     allStrokes = notebookPages[currentPageIndex].strokes || [];
     textLayer.innerHTML = notebookPages[currentPageIndex].text || "";
@@ -96,7 +104,11 @@ function triggerAutoSave() {
     autoSaveTimer = setTimeout(async () => {
         saveCurrentPageToMemory();
         const currentCanvasHeight = parseInt(window.getComputedStyle(scrollWrapper).minHeight) || 5000;
-        const projectData = { pages: notebookPages, settings: { theme: bgSelect.value, pageSize: sizeSelect.value, canvasHeight: currentCanvasHeight } };
+        const projectData = { 
+            pages: notebookPages, 
+            currentPageIndex: currentPageIndex, // Added this so it remembers what page you left off on
+            settings: { theme: bgSelect.value, pageSize: sizeSelect.value, canvasHeight: currentCanvasHeight } 
+        };
         await ipcRenderer.invoke('fs:saveJSON', currentNotebookPath, JSON.stringify(projectData, null, 2));
     }, 1500); 
 }
@@ -109,10 +121,10 @@ scrollWrapper.appendChild(imgPreview);
 let baseImgWidth = 0, baseImgHeight = 0, currentImageScale = 1, currentMouseX = 0, currentMouseY = 0;
 let selectedItemIndex = -1, isTransforming = false, transformMode = null, dragOffsetX = 0, dragOffsetY = 0;
 
-selectBtn.addEventListener('click', () => { currentTool = 'select'; selectBtn.classList.add('active'); penBtn.classList.remove('active'); eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; });
-penBtn.addEventListener('click', () => { currentTool = 'pen'; selectedItemIndex = -1; penBtn.classList.add('active'); selectBtn.classList.remove('active'); eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; resizeAndRedrawCanvas(); });
-eraserBtn.addEventListener('click', () => { currentTool = 'eraser'; selectedItemIndex = -1; eraserBtn.classList.add('active'); penBtn.classList.remove('active'); selectBtn.classList.remove('active'); imgPreview.style.display = 'none'; resizeAndRedrawCanvas(); });
-colorPicker.addEventListener('input', () => penBtn.click());
+if(selectBtn) selectBtn.addEventListener('click', () => { currentTool = 'select'; selectBtn.classList.add('active'); penBtn.classList.remove('active'); eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; });
+if(penBtn) penBtn.addEventListener('click', () => { currentTool = 'pen'; selectedItemIndex = -1; penBtn.classList.add('active'); selectBtn.classList.remove('active'); eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; resizeAndRedrawCanvas(); });
+if(eraserBtn) eraserBtn.addEventListener('click', () => { currentTool = 'eraser'; selectedItemIndex = -1; eraserBtn.classList.add('active'); penBtn.classList.remove('active'); selectBtn.classList.remove('active'); imgPreview.style.display = 'none'; resizeAndRedrawCanvas(); });
+if(colorPicker) colorPicker.addEventListener('input', () => penBtn.click());
 
 window.addEventListener('paste', (e) => {
     const items = (e.clipboardData || e.originalEvent.clipboardData).items;
@@ -136,23 +148,13 @@ window.addEventListener('paste', (e) => {
     }
 });
 
-// FEATURE ADDED: Allow deleting the selected image with the keyboard
-window.addEventListener('keydown', (e) => {
-    if ((e.key === 'Delete' || e.key === 'Backspace') && currentTool === 'select' && selectedItemIndex > -1) {
-        allStrokes.splice(selectedItemIndex, 1);
-        selectedItemIndex = -1;
-        isTransforming = false;
-        resizeAndRedrawCanvas();
-        triggerAutoSave();
-    }
-});
-
 function applyPageSettings(theme, size, canvasHeight, projectName) {
     if (theme) { 
         bgSelect.value = theme; 
         if (theme === 'black') container.classList.add('theme-black'); 
         else container.classList.remove('theme-black'); 
     }
+    
     if (size) { 
         sizeSelect.value = size; 
         if (size === 'a4') { 
@@ -161,14 +163,17 @@ function applyPageSettings(theme, size, canvasHeight, projectName) {
         } else { 
             container.classList.remove('size-a4'); 
             if(paginationControls) paginationControls.style.display = 'none'; 
+            
             if (currentPageIndex !== 0) {
-                loadPage(0);
+                loadPage(0, true);
                 socket.emit('change-page', 0);
             }
         } 
     }
+    
     if (canvasHeight && size !== 'a4') { scrollWrapper.style.minHeight = canvasHeight + 'px'; }
     if (projectName) { projectNameDisplay.innerText = projectName; } 
+    
     setTimeout(resizeAndRedrawCanvas, 350); 
     triggerAutoSave(); 
 }
@@ -208,10 +213,21 @@ if (isElectron) {
         else if (payload.action === 'open') {
             const data = JSON.parse(payload.data);
             const pName = `📁 ${payload.folderPath.split(/[\\/]/).pop()}`;
-            notebookPages = data.pages || [ { strokes: data.strokes || [], text: data.text || "" } ];
-            applyPageSettings(data.settings.theme, data.settings.pageSize, data.settings.canvasHeight, pName);
-            loadPage(data.currentPageIndex || 0);
-            socket.emit('load-full-state', { pages: notebookPages, currentPageIndex: currentPageIndex, settings: { ...data.settings, projectName: pName } });
+            
+            // THE FIX: Safely reads old JSON files
+            if (data.strokes && !data.pages) {
+                notebookPages = [ { strokes: data.strokes, text: data.text || "" } ];
+            } else if (data.pages) {
+                notebookPages = data.pages;
+            }
+
+            const safeSettings = data.settings || {};
+            applyPageSettings(safeSettings.theme || 'white', safeSettings.pageSize || 'infinite', safeSettings.canvasHeight || 5000, pName);
+            
+            // THE FIX: Passes 'true' so the canvas doesn't save a blank screen!
+            loadPage(data.currentPageIndex || 0, true);
+            
+            socket.emit('load-full-state', { pages: notebookPages, currentPageIndex: currentPageIndex, settings: { ...safeSettings, projectName: pName } });
             currentNotebookPath = payload.folderPath;
         }
     });
@@ -278,7 +294,7 @@ exportBtn.addEventListener('click', async () => {
         }
     }
 
-    loadPage(originalIndex);
+    loadPage(originalIndex, true);
 
     const arrayBuffer = pdf.output('arraybuffer');
     await ipcRenderer.invoke('fs:savePDF', currentNotebookPath, arrayBuffer);
@@ -289,21 +305,21 @@ exportBtn.addEventListener('click', async () => {
 const shareBtn = document.getElementById('share-btn'); const qrModal = document.getElementById('qr-modal'); const closeModalBtn = document.getElementById('close-modal-btn'); const copyUrlBtn = document.getElementById('copy-url-btn'); const urlInput = document.getElementById('local-url-input'); const qrContainer = document.getElementById('qrcode');
 function getLocalIPAddress() { return isElectron ? window.require('os').networkInterfaces()[Object.keys(window.require('os').networkInterfaces())[0]][1].address : window.location.hostname; }
 
-shareBtn.addEventListener('click', () => { 
+if(shareBtn) shareBtn.addEventListener('click', () => { 
     if (!isElectron) return alert("You are already on the browser!");
     const connectionUrl = `http://${getLocalIPAddress()}:3000`; urlInput.value = connectionUrl; 
     qrContainer.innerHTML = ''; new QRCode(qrContainer, { text: connectionUrl, width: 200, height: 200 }); qrModal.classList.remove('hidden'); 
 });
-closeModalBtn.addEventListener('click', () => qrModal.classList.add('hidden'));
+if(closeModalBtn) closeModalBtn.addEventListener('click', () => qrModal.classList.add('hidden'));
 
 socket.on('load-full-state', (state) => {
     notebookPages = state.pages;
     applyPageSettings(state.settings.theme, state.settings.pageSize, state.settings.canvasHeight, state.settings.projectName);
-    loadPage(state.currentPageIndex);
+    loadPage(state.currentPageIndex, true);
 });
 socket.on('receive-page-settings', (settings) => { applyPageSettings(settings.theme, settings.pageSize, settings.canvasHeight, settings.projectName); });
-socket.on('remote-page-changed', (index) => { loadPage(index); });
-socket.on('remote-page-added', (state) => { notebookPages = state.pages; loadPage(state.currentPageIndex); });
+socket.on('remote-page-changed', (index) => { loadPage(index, true); });
+socket.on('remote-page-added', (state) => { notebookPages = state.pages; loadPage(state.currentPageIndex, true); });
 socket.on('receive-active-page', (pageData) => { allStrokes = pageData.strokes; textLayer.innerHTML = pageData.text; resizeAndRedrawCanvas(); triggerAutoSave(); });
 socket.on('receive-stroke-batch', (batch) => { allStrokes.push(...batch); resizeAndRedrawCanvas(); triggerAutoSave(); });
 
@@ -349,10 +365,6 @@ function resizeAndRedrawCanvas() {
         ctx.strokeStyle = '#2196f3'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]); ctx.strokeRect(img.x, img.y, img.w, img.h); ctx.setLineDash([]); 
         ctx.fillStyle = 'white'; const handleSize = 12; const drawHandle = (x, y) => { ctx.fillRect(x - handleSize/2, y - handleSize/2, handleSize, handleSize); ctx.strokeRect(x - handleSize/2, y - handleSize/2, handleSize, handleSize); };
         drawHandle(img.x, img.y); drawHandle(img.x + img.w, img.y); drawHandle(img.x, img.y + img.h); drawHandle(img.x + img.w, img.y + img.h); 
-        
-        // Draws the Red X badge
-        ctx.fillStyle = '#ff4d4d'; ctx.beginPath(); ctx.arc(img.x + img.w, img.y, 14, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = 'white'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('✕', img.x + img.w, img.y + 1);
     }
 }
 window.addEventListener('resize', resizeAndRedrawCanvas);
@@ -390,21 +402,7 @@ canvas.addEventListener('pointerdown', (e) => {
 
     if (currentTool === 'select') {
         if (selectedItemIndex > -1) {
-            const img = allStrokes[selectedItemIndex]; 
-            
-            // FEATURE ADDED: Hit detection for the Red 'X' to delete the image
-            const distToX = Math.hypot(coords.x - (img.x + img.w), coords.y - img.y);
-            if (distToX <= 18) { 
-                allStrokes.splice(selectedItemIndex, 1); 
-                selectedItemIndex = -1; 
-                isTransforming = false; 
-                resizeAndRedrawCanvas(); 
-                saveCurrentPageToMemory(); 
-                triggerAutoSave(); 
-                return;
-            }
-            
-            const hit = (hx, hy) => coords.x > hx - 15 && coords.x < hx + 15 && coords.y > hy - 15 && coords.y < hy + 15;
+            const img = allStrokes[selectedItemIndex]; const hit = (hx, hy) => coords.x > hx - 15 && coords.x < hx + 15 && coords.y > hy - 15 && coords.y < hy + 15;
             if (hit(img.x, img.y)) { transformMode = 'resize-nw'; isTransforming = true; return; } if (hit(img.x + img.w, img.y)) { transformMode = 'resize-ne'; isTransforming = true; return; }
             if (hit(img.x, img.y + img.h)) { transformMode = 'resize-sw'; isTransforming = true; return; } if (hit(img.x + img.w, img.y + img.h)) { transformMode = 'resize-se'; isTransforming = true; return; }
             if (coords.x >= img.x && coords.x <= img.x + img.w && coords.y >= img.y && coords.y <= img.y + img.h) { transformMode = 'drag'; isTransforming = true; dragOffsetX = coords.x - img.x; dragOffsetY = coords.y - img.y; return; }
