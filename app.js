@@ -28,6 +28,199 @@ const brushSizeSlider = document.getElementById('brush-size');
 const brushSizeVal = document.getElementById('brush-size-val'); 
 const projectNameDisplay = document.getElementById('current-notebook-name');
 
+// Typing toolbar elements
+const typingToolbar = document.getElementById('typing-toolbar');
+const boldBtn = document.getElementById('bold-btn');
+const italicBtn = document.getElementById('italic-btn');
+const underlineBtn = document.getElementById('underline-btn');
+const fontSelect = document.getElementById('font-select');
+const fontSizeSelect = document.getElementById('font-size-select');
+const fontColor = document.getElementById('font-color');
+const alignLeftBtn = document.getElementById('align-left-btn');
+const alignCenterBtn = document.getElementById('align-center-btn');
+const alignRightBtn = document.getElementById('align-right-btn');
+const alignJustifyBtn = document.getElementById('align-justify-btn');
+const undoBtn = document.getElementById('undo-btn');
+const redoBtn = document.getElementById('redo-btn');
+const olistBtn = document.getElementById('olist-btn');
+const ulistBtn = document.getElementById('ulist-btn');
+const clearFormatBtn = document.getElementById('clear-format-btn');
+
+let isLaptopMode = true;
+
+// Custom undo/redo stack
+const undoRedoStack = {
+    history: [],
+    currentIndex: -1,
+    lastSnapshotText: '',
+    maxHistory: 100,
+
+    captureSnapshot(text) {
+        // Only capture if text has actually changed and differs from last snapshot
+        if (text === this.lastSnapshotText) return;
+        
+        // Remove any redo steps if user makes a new edit after undoing
+        this.history = this.history.slice(0, this.currentIndex + 1);
+        
+        // Add new snapshot
+        this.history.push(text);
+        this.currentIndex = this.history.length - 1;
+        this.lastSnapshotText = text;
+        
+        // Limit history size
+        if (this.history.length > this.maxHistory) {
+            this.history.shift();
+            this.currentIndex--;
+        }
+    },
+
+    undo() {
+        if (this.currentIndex > 0) {
+            this.currentIndex--;
+            return this.history[this.currentIndex];
+        }
+        return null;
+    },
+
+    redo() {
+        if (this.currentIndex < this.history.length - 1) {
+            this.currentIndex++;
+            return this.history[this.currentIndex];
+        }
+        return null;
+    },
+
+    clear() {
+        this.history = [];
+        this.currentIndex = -1;
+        this.lastSnapshotText = '';
+    }
+};
+
+// Capture initial state
+undoRedoStack.captureSnapshot(textLayer.innerHTML);
+
+// Listen for text changes and capture snapshots on every character (letter by letter)
+textLayer.addEventListener('input', (e) => {
+    const currentText = textLayer.innerHTML;
+    // Capture snapshot on every input event (every character typed)
+    undoRedoStack.captureSnapshot(currentText);
+});
+
+// Also capture on blur to save final state
+textLayer.addEventListener('blur', () => {
+    undoRedoStack.captureSnapshot(textLayer.innerHTML);
+});
+
+function getSelectionBlockParent() {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    let node = sel.getRangeAt(0).startContainer;
+    if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+    while (node && node !== document.body) {
+        const display = window.getComputedStyle(node).display;
+        if (display === 'block' || /^(P|DIV|LI|BLOCKQUOTE|TD)$/.test(node.nodeName)) return node;
+        node = node.parentNode;
+    }
+    return null;
+}
+
+function getBlockTextAlign() {
+    const parent = getSelectionBlockParent();
+    if (!parent) return 'left';
+    return window.getComputedStyle(parent).textAlign || 'left';
+}
+
+function clearAlignmentActive() {
+    [alignLeftBtn, alignCenterBtn, alignRightBtn, alignJustifyBtn].forEach(b => { if (b) b.classList.remove('active'); });
+}
+
+function applyAlignment(command) {
+    // command: 'left'|'center'|'right'|'justify'
+    const current = getBlockTextAlign();
+    if ((command === 'center' && current === 'center') || (command === 'left' && current === 'left')) {
+        document.execCommand('justifyLeft');
+        clearAlignmentActive();
+        if (alignLeftBtn) alignLeftBtn.classList.add('active');
+        return;
+    }
+    if (command === 'left') document.execCommand('justifyLeft');
+    else if (command === 'center') document.execCommand('justifyCenter');
+    else if (command === 'right') document.execCommand('justifyRight');
+    else if (command === 'justify') document.execCommand('justifyFull');
+
+    clearAlignmentActive();
+    if (command === 'left' && alignLeftBtn) alignLeftBtn.classList.add('active');
+    if (command === 'center' && alignCenterBtn) alignCenterBtn.classList.add('active');
+    if (command === 'right' && alignRightBtn) alignRightBtn.classList.add('active');
+    if (command === 'justify' && alignJustifyBtn) alignJustifyBtn.classList.add('active');
+}
+
+function setMode(laptop) {
+    isLaptopMode = laptop;
+    if (isLaptopMode) {
+        container.classList.remove('ipad-mode');
+        if (typingToolbar) typingToolbar.style.display = 'flex';
+        if (textLayer) { textLayer.contentEditable = true; textLayer.focus(); }
+        if (toggleBtn) toggleBtn.innerText = '💻 Laptop Mode';
+    } else {
+        container.classList.add('ipad-mode');
+        if (typingToolbar) typingToolbar.style.display = 'none';
+        if (textLayer) textLayer.contentEditable = false;
+        if (toggleBtn) toggleBtn.innerText = '📱 iPad Mode';
+    }
+    setTimeout(resizeAndRedrawCanvas, 150);
+}
+
+if (toggleBtn) toggleBtn.addEventListener('click', () => setMode(!isLaptopMode));
+setMode(true);
+
+// Typing toolbar actions
+if (boldBtn) boldBtn.addEventListener('click', (e) => { e.preventDefault(); document.execCommand('bold'); textLayer.focus(); });
+if (italicBtn) italicBtn.addEventListener('click', (e) => { e.preventDefault(); document.execCommand('italic'); textLayer.focus(); });
+if (underlineBtn) underlineBtn.addEventListener('click', (e) => { e.preventDefault(); document.execCommand('underline'); textLayer.focus(); });
+if (undoBtn) undoBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const undoText = undoRedoStack.undo();
+    if (undoText !== null) {
+        textLayer.innerHTML = undoText;
+        // Move cursor to end of text after undo
+        const range = document.createRange();
+        const sel = window.getSelection();
+        range.selectNodeContents(textLayer);
+        range.collapse(false); // false = end of content
+        sel.removeAllRanges();
+        sel.addRange(range);
+        textLayer.focus();
+    }
+});
+
+if (redoBtn) redoBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const redoText = undoRedoStack.redo();
+    if (redoText !== null) {
+        textLayer.innerHTML = redoText;
+        // Move cursor to end of text after redo
+        const range = document.createRange();
+        const sel = window.getSelection();
+        range.selectNodeContents(textLayer);
+        range.collapse(false); // false = end of content
+        sel.removeAllRanges();
+        sel.addRange(range);
+        textLayer.focus();
+    }
+});
+if (olistBtn) olistBtn.addEventListener('click', (e) => { e.preventDefault(); document.execCommand('insertOrderedList'); textLayer.focus(); });
+if (ulistBtn) ulistBtn.addEventListener('click', (e) => { e.preventDefault(); document.execCommand('insertUnorderedList'); textLayer.focus(); });
+if (clearFormatBtn) clearFormatBtn.addEventListener('click', (e) => { e.preventDefault(); document.execCommand('removeFormat'); textLayer.focus(); });
+if (alignLeftBtn) alignLeftBtn.addEventListener('click', (e) => { e.preventDefault(); applyAlignment('left'); textLayer.focus(); });
+if (alignCenterBtn) alignCenterBtn.addEventListener('click', (e) => { e.preventDefault(); applyAlignment('center'); textLayer.focus(); });
+if (alignRightBtn) alignRightBtn.addEventListener('click', (e) => { e.preventDefault(); applyAlignment('right'); textLayer.focus(); });
+if (alignJustifyBtn) alignJustifyBtn.addEventListener('click', (e) => { e.preventDefault(); applyAlignment('justify'); textLayer.focus(); });
+if (fontSelect) fontSelect.addEventListener('change', (e) => { document.execCommand('fontName', false, e.target.value); textLayer.focus(); });
+if (fontSizeSelect) fontSizeSelect.addEventListener('change', (e) => { document.execCommand('fontSize', false, e.target.value); textLayer.focus(); });
+if (fontColor) fontColor.addEventListener('input', (e) => { document.execCommand('foreColor', false, e.target.value); textLayer.focus(); });
+
 const zoomSlider = document.getElementById('zoom-slider');
 const zoomDisplay = document.getElementById('zoom-display');
 
@@ -39,7 +232,6 @@ const pageDisplay = document.getElementById('page-display');
 
 let currentTool = 'pen'; 
 let currentNotebookPath = null;
-let currentProjectFolder = ''; // Store project folder basename from server
 let currentZoom = 1.0;
 let eraserMode = 'delete'; // 'delete' or 'white' 
 
@@ -75,6 +267,10 @@ function loadPage(index, skipSave = false) {
     currentPageIndex = index;
     allStrokes = notebookPages[currentPageIndex].strokes || [];
     textLayer.innerHTML = notebookPages[currentPageIndex].text || "";
+    
+    // Reset undo/redo stack when loading a new page
+    undoRedoStack.clear();
+    undoRedoStack.captureSnapshot(textLayer.innerHTML);
     
     if(pageDisplay) pageDisplay.innerText = `Page ${currentPageIndex + 1}/${notebookPages.length}`;
     resizeAndRedrawCanvas();
@@ -168,7 +364,6 @@ window.addEventListener('paste', async (e) => {
                     // keep the data URL for broadcasting to remote (browser) clients
                     imgPreview.dataset.dataUrl = dataUrl;
                     let finalSrc = dataUrl;
-                    let assetTag = null;
                     // If running in Electron and a notebook folder is open, save the asset to disk
                     if (isElectron && currentNotebookPath && ipcRenderer) {
                         try {
@@ -176,38 +371,10 @@ window.addEventListener('paste', async (e) => {
                             const fileName = `img-${Date.now()}.jpg`;
                             const savedFileUrl = await ipcRenderer.invoke('fs:saveAsset', currentNotebookPath, fileName, base64);
                             finalSrc = savedFileUrl;
-                            assetTag = fileName;
                             imgPreview.dataset.assetTag = fileName;
                         } catch (err) {
                             console.error('Failed to save asset:', err);
                         }
-                    }
-                    // If browser client (not Electron), upload to server endpoint
-                    else if (!isElectron && currentProjectFolder) {
-                        console.log('Browser uploading image. Project folder:', currentProjectFolder);
-                        try {
-                            const fileName = `img-${Date.now()}.jpg`;
-                            const response = await fetch('/upload-asset', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    project: currentProjectFolder, // Use the project folder basename from server
-                                    fileName: fileName,
-                                    base64Data: dataUrl
-                                })
-                            });
-                            const data = await response.json();
-                            console.log('Upload response:', data);
-                            if (data.success && data.url) {
-                                finalSrc = data.url;
-                                assetTag = fileName;
-                                imgPreview.dataset.assetTag = fileName;
-                            }
-                        } catch (err) {
-                            console.error('Failed to upload asset:', err);
-                        }
-                    } else if (!isElectron) {
-                        console.log('Browser mode but no project folder set. currentProjectFolder:', currentProjectFolder);
                     }
                     imgPreview.src = finalSrc; imgPreview.width = baseImgWidth; imgPreview.height = baseImgHeight; imgPreview.style.display = 'block';
                     currentTool = 'image-placer'; penBtn.classList.remove('active'); eraserBtn.classList.remove('active'); selectBtn.classList.remove('active');
@@ -262,7 +429,10 @@ toggleBtn.addEventListener('click', () => {
 
 clearBtn.addEventListener('click', () => { 
     if (confirm("Clear all ink on this page?")) { 
-        allStrokes = []; textLayer.innerHTML = ""; selectedItemIndex = -1; resizeAndRedrawCanvas(); 
+        allStrokes = []; textLayer.innerHTML = ""; selectedItemIndex = -1; 
+        undoRedoStack.clear();
+        undoRedoStack.captureSnapshot("");
+        resizeAndRedrawCanvas(); 
         saveCurrentPageToMemory();
         socket.emit('update-active-page', notebookPages[currentPageIndex]); 
         triggerAutoSave(); 
@@ -278,6 +448,8 @@ if (isElectron) {
             notebookPages = [ { strokes: [], text: "" } ];
             currentPageIndex = 0;
             allStrokes = []; textLayer.innerHTML = "";
+            undoRedoStack.clear();
+            undoRedoStack.captureSnapshot("");
             applyPageSettings('white', 'infinite', 5000, pName);
             socket.emit('update-page-settings', { projectName: pName }); 
         } 
@@ -387,10 +559,6 @@ socket.on('load-full-state', (state) => {
     notebookPages = state.pages;
     applyPageSettings(state.settings.theme, state.settings.pageSize, state.settings.canvasHeight, state.settings.projectName);
     loadPage(state.currentPageIndex, true);
-});
-socket.on('set-project-folder', (folderName) => {
-    console.log('Browser received project folder:', folderName);
-    currentProjectFolder = folderName; // Store project folder for browser uploads
 });
 socket.on('receive-page-settings', (settings) => { applyPageSettings(settings.theme, settings.pageSize, settings.canvasHeight, settings.projectName); });
 socket.on('remote-page-changed', (index) => { loadPage(index, true); });

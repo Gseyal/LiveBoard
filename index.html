@@ -58,6 +58,35 @@
             <button id="share-btn" class="btn" style="background:#e8f5e9; border-color:#81c784; color:#2e7d32;">📱 iPad</button>
             <button id="clear-btn" class="btn clear-btn">🗑️ Clear</button>
         </div>
+        <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
+            <div id="typing-toolbar" style="display: none; align-items: center; gap:6px;">
+                <button id="undo-btn" class="btn" title="Undo">↶</button>
+                <button id="redo-btn" class="btn" title="Redo">↷</button>
+                <button id="bold-btn" class="btn" title="Bold">B</button>
+                <button id="italic-btn" class="btn" title="Italic">I</button>
+                <button id="underline-btn" class="btn" title="Underline">U</button>
+                <select id="font-select" class="btn">
+                    <option value="Arial">Arial</option>
+                    <option value="Georgia">Georgia</option>
+                    <option value="Times New Roman">Times</option>
+                    <option value="Courier New">Courier</option>
+                </select>
+                <select id="font-size-select" class="btn">
+                    <option value="3">Small</option>
+                    <option value="4" selected>Normal</option>
+                    <option value="5">Large</option>
+                    <option value="6">XL</option>
+                </select>
+                <input type="color" id="font-color" value="#000000" title="Font color" style="width:38px; height:30px; padding:3px;">
+                <button id="align-left-btn" class="btn" title="Align left">⟵</button>
+                <button id="align-center-btn" class="btn" title="Center">⮜ ⮞</button>
+                <button id="align-right-btn" class="btn" title="Align right">⟶</button>
+                <button id="align-justify-btn" class="btn" title="Justify">≡</button>
+                <button id="olist-btn" class="btn" title="Ordered list">1.</button>
+                <button id="ulist-btn" class="btn" title="Unordered list">•</button>
+                <button id="clear-format-btn" class="btn" title="Clear formatting">Tx</button>
+            </div>
+        </div>
     </div>
 
     <div id="notebook-container">
