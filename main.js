@@ -216,7 +216,7 @@ app.whenReady().then(() => {
                     accelerator: 'CmdOrCtrl+O',
                     click: async () => {
                         const result = await dialog.showOpenDialog(mainWindow, {
-                            properties: ['openFile'], filters: [{ name: 'JSON', extensions: ['json'] }]
+                            properties: ['openFile'], filters: [{ name: 'ScribeSync Notebook', extensions: ['sbn'] }]
                         });
                         if (!result.canceled && result.filePaths.length > 0) {
                             const filePath = result.filePaths[0];
@@ -245,7 +245,7 @@ app.whenReady().then(() => {
                                 notebookState.settings = currentSettings;
                                 io.sockets.emit('set-project-folder', baseName); // Broadcast to all connected clients
                                 console.log('[Socket] Broadcasting project folder:', baseName);
-                            } catch (e) { console.error("Error parsing JSON:", e); }
+                            } catch (e) { console.error("Error parsing notebook file:", e); }
                             mainWindow.webContents.send('menu-action', { action: 'open', data: data, folderPath: path.dirname(filePath), fileName: path.basename(filePath) });
                         }
                     }
@@ -262,7 +262,7 @@ app.whenReady().then(() => {
 });
 
 // --- DYNAMIC FILE SAVING ---
-ipcMain.handle('fs:saveJSON', (event, folderPath, data) => {
+ipcMain.handle('fs:saveSBN', (event, folderPath, data) => {
     const folderName = path.basename(folderPath);
     try {
         const parsed = JSON.parse(data);
@@ -293,11 +293,11 @@ ipcMain.handle('fs:saveJSON', (event, folderPath, data) => {
             });
         }
 
-        fs.writeFileSync(path.join(folderPath, `${folderName}.json`), JSON.stringify(parsed, null, 2));
+        fs.writeFileSync(path.join(folderPath, `${folderName}.sbn`), JSON.stringify(parsed, null, 2));
         return true;
     } catch (e) {
-        console.error('fs:saveJSON error:', e);
-        fs.writeFileSync(path.join(folderPath, `${folderName}.json`), data);
+        console.error('fs:saveSBN error:', e);
+        fs.writeFileSync(path.join(folderPath, `${folderName}.sbn`), data);
         return false;
     }
 });

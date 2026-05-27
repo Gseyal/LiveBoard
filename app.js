@@ -66,7 +66,7 @@ function saveCurrentPageToMemory() {
     notebookPages[currentPageIndex] = { strokes: [...allStrokes], text: textLayer.innerHTML };
 }
 
-// THE FIX: Added 'skipSave' so the app doesn't overwrite your JSON with a blank canvas
+// THE FIX: Added 'skipSave' so the app doesn't overwrite your notebook with a blank canvas
 function loadPage(index, skipSave = false) {
     if (!skipSave) {
         saveCurrentPageToMemory(); 
@@ -114,7 +114,7 @@ function triggerAutoSave() {
             currentPageIndex: currentPageIndex, // Added this so it remembers what page you left off on
             settings: { theme: bgSelect.value, pageSize: sizeSelect.value, canvasHeight: currentCanvasHeight } 
         };
-        await ipcRenderer.invoke('fs:saveJSON', currentNotebookPath, JSON.stringify(projectData, null, 2));
+        await ipcRenderer.invoke('fs:saveSBN', currentNotebookPath, JSON.stringify(projectData, null, 2));
     }, 1500); 
 }
 
@@ -285,10 +285,7 @@ if (isElectron) {
             const data = JSON.parse(payload.data);
             const pName = `📁 ${payload.folderPath.split(/[\\/]/).pop()}`;
             
-            // THE FIX: Safely reads old JSON files
-            if (data.strokes && !data.pages) {
-                notebookPages = [ { strokes: data.strokes, text: data.text || "" } ];
-            } else if (data.pages) {
+            if (data.pages) {
                 notebookPages = data.pages;
             }
 
