@@ -1,6 +1,6 @@
 {
   "name": "scribesync",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Offline laptop notebook with iPad network syncing",
   "main": "main.js",
   "scripts": {
@@ -8,19 +8,27 @@
     "build": "electron-builder --win"
   },
   "build": {
-    "appId": "com.scribesync.app",
-    "productName": "ScribeSync",
-    "directories": {
-      "output": "release"
-    },
-    "win": {
-      "target": "nsis"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+  "appId": "com.scribesync.app",
+  "productName": "ScribeSync",
+  "directories": {
+    "output": "release",
+    "buildResources": "icon"
   },
+  "win": {
+    "target": "nsis",
+    "icon": "icon/scribe_sync_icon_protected.ico"
+  },
+  "nsis": {
+    "installerIcon": "icon/scribe_sync_icon_protected.ico",
+    "shortcutName": "ScribeSync",
+    "uninstallerIcon": "icon/scribe_sync_icon_protected.ico",
+    "installerHeaderIcon": "icon/scribe_sync_icon_protected.ico",
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  }
+},
   "dependencies": {
     "express": "^4.18.2",
     "socket.io": "^4.7.2"

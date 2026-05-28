@@ -35,16 +35,16 @@ select, input[type="color"] { cursor: pointer; border: 1px solid #ccc; border-ra
 }
 
 #scroll-wrapper {
-    position: relative; width: 1200px !important; max-width: 1200px !important; min-height: 5000px;
+    position: relative; width: 1498px !important; max-width: 1498px !important; min-height: 5000px;
     margin: 40px auto; background-color: #ffffff; box-shadow: 0 10px 30px rgba(0,0,0,0.15); 
-    background-image: repeating-linear-gradient(to bottom, transparent, transparent 1121px, #d0d0d0 1121px, #d0d0d0 1123px);
+    background-image: repeating-linear-gradient(to bottom, transparent, transparent 1057px, #d0d0d0 1057px, #d0d0d0 1059px);
     transform-origin: top center; transition: transform 0.15s ease-out; 
 }
 
 #notebook-container.theme-black { background: #121212; }
 #notebook-container.theme-black #scroll-wrapper { 
     background-color: #1e1e1e; 
-    background-image: repeating-linear-gradient(to bottom, transparent, transparent 1121px, #333333 1121px, #333333 1123px);
+    background-image: repeating-linear-gradient(to bottom, transparent, transparent 1057px, #333333 1057px, #333333 1059px);
 }
 .theme-black #text-layer { color: #e0e0e0; }
 /* ===============================================
