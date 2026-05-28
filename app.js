@@ -47,6 +47,28 @@ let notebookPages = [ { strokes: [], text: "" } ];
 let currentPageIndex = 0;
 let allStrokes = []; 
 
+function generateStrokeId() {
+    return `stroke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function ensureStrokeId(stroke) {
+    if (!stroke) return stroke;
+    if (!stroke.id) stroke.id = generateStrokeId();
+    return stroke;
+}
+
+function ensurePageStrokeIds(page) {
+    if (!page || !Array.isArray(page.strokes)) return page;
+    page.strokes.forEach(ensureStrokeId);
+    return page;
+}
+
+function ensureNotebookStrokeIds(pages) {
+    if (!Array.isArray(pages)) return pages;
+    pages.forEach(ensurePageStrokeIds);
+    return pages;
+}
+
 brushSizeSlider.addEventListener('input', (e) => { brushSizeVal.innerText = e.target.value; });
 
 function applyZoom() {
@@ -73,12 +95,150 @@ function loadPage(index, skipSave = false) {
     }
     
     currentPageIndex = index;
+    ensureNotebookStrokeIds(notebookPages);
     allStrokes = notebookPages[currentPageIndex].strokes || [];
-    textLayer.innerHTML = notebookPages[currentPageIndex].text || "";
+    setTextLayerContent(textLayer, notebookPages[currentPageIndex].text || "");
     
     if(pageDisplay) pageDisplay.innerText = `Page ${currentPageIndex + 1}/${notebookPages.length}`;
     resizeAndRedrawCanvas();
     triggerAutoSave();
+}
+
+function escapeHtml(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function extractTextForStorage(layer) {
+    const blockTags = new Set(['DIV', 'P', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+    let output = '';
+
+    function appendNewline() {
+        if (!output.endsWith('\n')) output += '\n';
+    }
+
+    function walk(node) {
+        if (!node) return;
+
+        if (node.nodeType === Node.TEXT_NODE) {
+            output += node.nodeValue || '';
+            return;
+        }
+
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+        if (node.tagName === 'BR') {
+            appendNewline();
+            return;
+        }
+
+        let child = node.firstChild;
+        while (child) {
+            walk(child);
+            child = child.nextSibling;
+        }
+
+        if (blockTags.has(node.tagName)) {
+            appendNewline();
+        }
+    }
+
+    walk(layer);
+
+    return output.replace(/\u00a0/g, ' ');
+}
+
+function extractExportTextFromLayer(layer) {
+    const temp = document.createElement('div');
+    temp.innerHTML = layer.innerHTML || '';
+
+    const blockTags = new Set(['DIV', 'P', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+
+    function collectInlineText(node) {
+        if (!node) return '';
+
+        if (node.nodeType === Node.TEXT_NODE) {
+            return node.nodeValue || '';
+        }
+
+        if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+        if (node.tagName === 'BR') {
+            return '\n';
+        }
+
+        let output = '';
+        let child = node.firstChild;
+        while (child) {
+            output += collectInlineText(child);
+            child = child.nextSibling;
+        }
+        return output;
+    }
+
+    const lines = [];
+    let sawBlock = false;
+
+    let child = temp.firstChild;
+    while (child) {
+        if (child.nodeType === Node.TEXT_NODE) {
+            const text = (child.nodeValue || '').replace(/\u00a0/g, ' ').replace(/\r/g, '');
+            if (text.trim() !== '') {
+                lines.push(text.replace(/[\t ]+/g, ' ').trim());
+                sawBlock = true;
+            }
+        } else if (child.nodeType === Node.ELEMENT_NODE && blockTags.has(child.tagName)) {
+            const rawLine = collectInlineText(child)
+                .replace(/\u00a0/g, ' ')
+                .replace(/\r/g, '');
+
+            // A blank block such as <div><br></div> should contribute exactly one empty line.
+            const normalizedLine = rawLine
+                .replace(/\n+/g, '\n')
+                .replace(/[\t ]+/g, ' ')
+                .trim();
+
+            lines.push(normalizedLine);
+            sawBlock = true;
+        } else if (child.nodeType === Node.ELEMENT_NODE && child.tagName === 'BR') {
+            if (sawBlock) lines.push('');
+        }
+
+        child = child.nextSibling;
+    }
+
+    return lines.join('\n');
+}
+
+function normalizeWhitespaceForExport(rawText) {
+    // Preserve blank lines, but collapse multiple spaces/tabs into one per line
+    if (!rawText) return '';
+    const lines = rawText.split('\n');
+    const normalized = lines.map(line => {
+        // replace tabs with spaces, collapse runs of spaces, and trim ends (HTML collapses whitespace)
+        return line.replace(/\t/g, ' ').replace(/ {2,}/g, ' ').replace(/^\s+|\s+$/g, '');
+    });
+    return normalized.join('\n');
+}
+
+function setTextLayerContent(layer, value) {
+    const text = String(value || '');
+    if (!text) {
+        layer.innerHTML = '';
+        return;
+    }
+
+    const looksLikeLegacyHtml = /<\/?[a-z][\s\S]*>/i.test(text) || /&nbsp;|&lt;|&gt;|&amp;/.test(text);
+    if (looksLikeLegacyHtml) {
+        layer.innerHTML = text;
+        return;
+    }
+
+    layer.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
 }
 
 if(prevPageBtn) prevPageBtn.addEventListener('click', () => {
@@ -302,6 +462,99 @@ if (isElectron) {
     socket.on('trigger-remote-export', () => { if (currentNotebookPath) exportBtn.click(); });
 }
 
+function buildWrappedLines(ctx, text, maxWidth) {
+    const lines = [];
+    const paragraphs = String(text || '').replace(/\r/g, '').split('\n');
+
+    function splitTokenByWidth(token) {
+        if (!token) return [''];
+        if (ctx.measureText(token).width <= maxWidth) return [token];
+
+        const chunks = [];
+        let chunk = '';
+        for (const ch of token) {
+            const candidate = chunk + ch;
+            if (chunk && ctx.measureText(candidate).width > maxWidth) {
+                chunks.push(chunk);
+                chunk = ch;
+            } else {
+                chunk = candidate;
+            }
+        }
+        if (chunk) chunks.push(chunk);
+        return chunks;
+    }
+
+    paragraphs.forEach((paragraph) => {
+        if (paragraph.length === 0) {
+            lines.push('');
+            return;
+        }
+
+        const tokens = paragraph.match(/(\s+|\S+)/g) || [''];
+        if (tokens.length === 0) {
+            lines.push('');
+            return;
+        }
+
+        let currentLine = '';
+        for (const token of tokens) {
+            const candidate = currentLine + token;
+            if (ctx.measureText(candidate).width <= maxWidth) {
+                currentLine = candidate;
+            } else if (currentLine) {
+                lines.push(currentLine);
+                const chunks = splitTokenByWidth(token);
+                if (chunks.length > 1) {
+                    for (let i = 0; i < chunks.length - 1; i++) {
+                        lines.push(chunks[i]);
+                    }
+                }
+                currentLine = chunks[chunks.length - 1] || '';
+            } else {
+                const chunks = splitTokenByWidth(token);
+                if (chunks.length > 1) {
+                    for (let i = 0; i < chunks.length - 1; i++) {
+                        lines.push(chunks[i]);
+                    }
+                }
+                currentLine = chunks[chunks.length - 1] || '';
+            }
+        }
+        lines.push(currentLine);
+    });
+
+    return lines;
+}
+
+function getRenderedTextBottom(ctx, text, canvasWidth, options) {
+    const { padding, lineHeightPx } = options;
+    const maxTextWidth = Math.max(1, canvasWidth - (padding * 2));
+    const lines = buildWrappedLines(ctx, text, maxTextWidth);
+    return padding + (lines.length * lineHeightPx);
+}
+
+function drawTextForExport(ctx, text, canvasWidth, options) {
+    const { padding, lineHeightPx, fillStyle, font } = options;
+    const maxTextWidth = Math.max(1, canvasWidth - (padding * 2));
+    const lines = buildWrappedLines(ctx, text, maxTextWidth);
+
+    ctx.save();
+    ctx.font = font;
+    ctx.fillStyle = fillStyle;
+    ctx.textBaseline = 'top';
+
+    let y = padding;
+    lines.forEach((line) => {
+        if (line) {
+            ctx.fillText(line, padding, y);
+        }
+        y += lineHeightPx;
+    });
+
+    ctx.restore();
+}
+
 exportBtn.addEventListener('click', async () => {
     if (!isElectron) {
         socket.emit('trigger-remote-export');
@@ -315,33 +568,58 @@ exportBtn.addEventListener('click', async () => {
     exportBtn.innerText = "⏳ Exporting..."; 
     saveCurrentPageToMemory();
     
-    const pdf = new jsPDF('p', 'pt', 'a4'); 
+    const isA4Mode = sizeSelect.value === 'a4';
+    const pdf = isA4Mode
+        ? new jsPDF('p', 'pt', 'a4')
+        : new jsPDF({ orientation: 'landscape', unit: 'pt', format: [1123.2, 794.16] });
     const pdfWidth = pdf.internal.pageSize.getWidth(); 
     const pdfHeight = pdf.internal.pageSize.getHeight();
     const originalIndex = currentPageIndex;
 
-    const pagesToExport = sizeSelect.value === 'a4' ? notebookPages.length : 1;
+    const pagesToExport = isA4Mode ? notebookPages.length : 1;
 
     for (let p = 0; p < pagesToExport; p++) {
         currentPageIndex = p;
         allStrokes = notebookPages[p].strokes || [];
-        textLayer.innerHTML = notebookPages[p].text || '';
+        setTextLayerContent(textLayer, notebookPages[p].text || '');
         resizeAndRedrawCanvas();
+
+        const pagePlainText = normalizeWhitespaceForExport(extractExportTextFromLayer(textLayer));
+        const textStyle = window.getComputedStyle(textLayer);
+        const textPadding = parseFloat(textStyle.paddingTop) || 40;
+        const textFontSize = parseFloat(textStyle.fontSize) || 18;
+        const textLineHeight = parseFloat(textStyle.lineHeight) || (textFontSize * 1.6);
+        const textFontFamily = textStyle.fontFamily || '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        const exportFont = `${textFontSize}px ${textFontFamily}`;
 
         let maxContentY = 0;
         allStrokes.forEach(stroke => {
             if (stroke.type === 'image') maxContentY = Math.max(maxContentY, stroke.y + stroke.h);
             else if (stroke.path) stroke.path.forEach(pt => maxContentY = Math.max(maxContentY, pt.y));
         });
-        if (maxContentY === 0) maxContentY = 1123; maxContentY += 100;
+        const measureCanvas = document.createElement('canvas');
+        const measureCtx = measureCanvas.getContext('2d');
+        measureCtx.font = exportFont;
+        maxContentY = Math.max(maxContentY, getRenderedTextBottom(measureCtx, pagePlainText, canvas.width, {
+            padding: textPadding,
+            lineHeightPx: textLineHeight,
+        }));
+        if (maxContentY === 0) maxContentY = isA4Mode ? 1123 : 1059;
+        maxContentY += 100;
 
         const tempCanvas = document.createElement('canvas'); 
         tempCanvas.width = canvas.width; 
-        tempCanvas.height = sizeSelect.value === 'a4' ? canvas.height : maxContentY;
+        tempCanvas.height = isA4Mode ? canvas.height : maxContentY;
         const tCtx = tempCanvas.getContext('2d'); 
         
         tCtx.fillStyle = bgSelect.value === 'black' ? '#121212' : '#ffffff'; 
         tCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height); 
+        drawTextForExport(tCtx, pagePlainText, tempCanvas.width, {
+            padding: textPadding,
+            lineHeightPx: textLineHeight,
+            fillStyle: bgSelect.value === 'black' ? '#e0e0e0' : '#000000',
+            font: exportFont,
+        });
         tCtx.drawImage(canvas, 0, 0); 
         
         const imgData = tempCanvas.toDataURL('image/jpeg', 1.0);
@@ -354,7 +632,7 @@ exportBtn.addEventListener('click', async () => {
         pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, scaledHeight); 
         heightLeft -= pdfHeight;
         
-        while (heightLeft >= 0) { 
+        while (heightLeft > 0.5) { 
             position = heightLeft - scaledHeight; 
             pdf.addPage(); 
             pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, scaledHeight); 
@@ -381,7 +659,7 @@ if(shareBtn) shareBtn.addEventListener('click', () => {
 if(closeModalBtn) closeModalBtn.addEventListener('click', () => qrModal.classList.add('hidden'));
 
 socket.on('load-full-state', (state) => {
-    notebookPages = state.pages;
+    notebookPages = ensureNotebookStrokeIds(state.pages || []);
     applyPageSettings(state.settings.theme, state.settings.pageSize, state.settings.canvasHeight, state.settings.projectName);
     loadPage(state.currentPageIndex, true);
 });
@@ -391,9 +669,33 @@ socket.on('set-project-folder', (folderName) => {
 });
 socket.on('receive-page-settings', (settings) => { applyPageSettings(settings.theme, settings.pageSize, settings.canvasHeight, settings.projectName); });
 socket.on('remote-page-changed', (index) => { loadPage(index, true); });
-socket.on('remote-page-added', (state) => { notebookPages = state.pages; loadPage(state.currentPageIndex, true); });
-socket.on('receive-active-page', (pageData) => { allStrokes = pageData.strokes; textLayer.innerHTML = pageData.text; resizeAndRedrawCanvas(); triggerAutoSave(); });
-socket.on('receive-stroke-batch', (batch) => { allStrokes.push(...batch); resizeAndRedrawCanvas(); triggerAutoSave(); });
+socket.on('remote-page-added', (state) => { notebookPages = ensureNotebookStrokeIds(state.pages || []); loadPage(state.currentPageIndex, true); });
+socket.on('receive-active-page', (pageData) => {
+    const activePage = ensurePageStrokeIds(pageData || { strokes: [], text: '' });
+    allStrokes = activePage.strokes || [];
+    setTextLayerContent(textLayer, activePage.text || '');
+    resizeAndRedrawCanvas();
+    triggerAutoSave();
+});
+socket.on('receive-stroke-batch', (batch) => {
+    const batchWithIds = (batch || []).map(ensureStrokeId);
+    allStrokes.push(...batchWithIds);
+    if (notebookPages[currentPageIndex]) notebookPages[currentPageIndex].strokes = allStrokes;
+    resizeAndRedrawCanvas();
+    triggerAutoSave();
+});
+socket.on('receive-stroke-deletion', ({ pageIndex, strokeIds }) => {
+    if (!Array.isArray(strokeIds) || strokeIds.length === 0) return;
+    const targetPage = notebookPages[pageIndex];
+    if (targetPage && Array.isArray(targetPage.strokes)) {
+        targetPage.strokes = targetPage.strokes.filter((stroke) => !strokeIds.includes(stroke.id));
+    }
+    if (pageIndex === currentPageIndex) {
+        allStrokes = allStrokes.filter((stroke) => !strokeIds.includes(stroke.id));
+        resizeAndRedrawCanvas();
+        triggerAutoSave();
+    }
+});
 
 let typingTimer;
 textLayer.addEventListener('input', () => { 
@@ -470,6 +772,7 @@ canvas.addEventListener('pointerdown', (e) => {
     const coords = getCoordinates(e);
     if (currentTool === 'image-placer') {
         const newImg = {
+            id: generateStrokeId(),
             type: 'image',
             // keep a single URL field in the saved stroke object
             src: imgPreview.src || imgPreview.dataset.dataUrl,
@@ -501,7 +804,7 @@ canvas.addEventListener('pointerdown', (e) => {
     
     isDrawing = true; lastX = coords.x; lastY = coords.y; const activeColor = colorPicker.value; const isEraser = (currentTool === 'eraser'); const activeSize = parseInt(brushSizeSlider.value, 10);
     const eraserColor = eraserMode === 'white' ? '#ffffff' : activeColor;
-    currentStroke = { type: 'stroke', color: eraserColor, isEraser: isEraser, eraserMode: isEraser ? eraserMode : null, size: activeSize, path: [{ x: lastX, y: lastY }] };
+    currentStroke = { id: generateStrokeId(), type: 'stroke', color: eraserColor, isEraser: isEraser, eraserMode: isEraser ? eraserMode : null, size: activeSize, path: [{ x: lastX, y: lastY }] };
     socket.emit('start-stream', { color: eraserColor, isEraser: isEraser, size: activeSize, x: lastX, y: lastY });
 });
 
@@ -522,6 +825,48 @@ function isPointNearPath(point, path, threshold) {
     return false;
 }
 
+function distanceToSegment(point, start, end) {
+    const segmentLengthSquared = ((end.x - start.x) ** 2) + ((end.y - start.y) ** 2);
+    if (segmentLengthSquared === 0) {
+        const dx = point.x - start.x;
+        const dy = point.y - start.y;
+        return Math.sqrt((dx * dx) + (dy * dy));
+    }
+
+    const rawT = (((point.x - start.x) * (end.x - start.x)) + ((point.y - start.y) * (end.y - start.y))) / segmentLengthSquared;
+    const t = Math.max(0, Math.min(1, rawT));
+    const closestX = start.x + (t * (end.x - start.x));
+    const closestY = start.y + (t * (end.y - start.y));
+    const dx = point.x - closestX;
+    const dy = point.y - closestY;
+    return Math.sqrt((dx * dx) + (dy * dy));
+}
+
+function isStrokeHitByEraser(strokePath, eraserPath, threshold) {
+    if (!Array.isArray(strokePath) || strokePath.length === 0 || !Array.isArray(eraserPath) || eraserPath.length === 0) {
+        return false;
+    }
+
+    if (strokePath.length === 1) {
+        return eraserPath.some((pt) => distanceToSegment(pt, strokePath[0], strokePath[0]) <= threshold);
+    }
+
+    for (let i = 0; i < strokePath.length - 1; i += 1) {
+        const strokeStart = strokePath[i];
+        const strokeEnd = strokePath[i + 1];
+        for (let j = 0; j < eraserPath.length - 1; j += 1) {
+            const eraserStart = eraserPath[j];
+            const eraserEnd = eraserPath[j + 1];
+            if (distanceToSegment(eraserStart, strokeStart, strokeEnd) <= threshold) return true;
+            if (distanceToSegment(eraserEnd, strokeStart, strokeEnd) <= threshold) return true;
+            if (distanceToSegment(strokeStart, eraserStart, eraserEnd) <= threshold) return true;
+            if (distanceToSegment(strokeEnd, eraserStart, eraserEnd) <= threshold) return true;
+        }
+    }
+
+    return strokePath.some((strokePoint) => eraserPath.some((eraserPoint) => distanceToSegment(eraserPoint, strokePoint, strokePoint) <= threshold));
+}
+
 let strokeBatch = []; let batchSendTimer = null;   
 function handlePointerUpOut(e) {
     if (currentTool === 'select' && isTransforming) { isTransforming = false; transformMode = null; saveCurrentPageToMemory(); socket.emit('update-active-page', notebookPages[currentPageIndex]); triggerAutoSave(); return; }
@@ -529,15 +874,30 @@ function handlePointerUpOut(e) {
     isDrawing = false;
     if (currentStroke.path && currentStroke.path.length > 0) {
         if (currentStroke.isEraser && eraserMode === 'delete') {
-            const eraserRadius = (currentStroke.size || 3) * 1.5;
+            clearTimeout(batchSendTimer);
+            const removedStrokeIds = [];
+            strokeBatch = strokeBatch.filter((stroke) => {
+                if (!stroke || stroke.type === 'image' || !stroke.path) return true;
+                const eraserRadius = Math.max(8, (currentStroke.size || 3) * 1.5);
+                const shouldDelete = isStrokeHitByEraser(stroke.path, currentStroke.path, eraserRadius);
+                if (shouldDelete && stroke.id) removedStrokeIds.push(stroke.id);
+                return !shouldDelete;
+            });
+            const eraserRadius = Math.max(8, (currentStroke.size || 3) * 1.5);
             allStrokes = allStrokes.filter(stroke => {
                 if (stroke.type === 'image') return true;
                 if (!stroke.path) return true;
-                return !stroke.path.some(pt => isPointNearPath(pt, currentStroke.path, eraserRadius));
+                const shouldDelete = isStrokeHitByEraser(stroke.path, currentStroke.path, eraserRadius);
+                if (shouldDelete && stroke.id) removedStrokeIds.push(stroke.id);
+                return !shouldDelete;
             });
             resizeAndRedrawCanvas();
             saveCurrentPageToMemory();
+            if (removedStrokeIds.length > 0) {
+                socket.emit('delete-strokes', { pageIndex: currentPageIndex, strokeIds: removedStrokeIds });
+            }
             socket.emit('update-active-page', notebookPages[currentPageIndex]);
+            strokeBatch = [];
         } else {
             allStrokes.push(currentStroke); strokeBatch.push(currentStroke);
         }

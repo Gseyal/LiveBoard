@@ -1,6 +1,7 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -17,6 +18,108 @@ expressApp.use(express.json({ limit: '50mb' })); // Allow large base64 images
 
 const projectMap = {};
 
+function getLocalIPAddress() {
+    const networkInterfaces = os.networkInterfaces();
+    const preferredNamePatterns = [/wi-?fi/i, /wlan/i, /wireless/i, /airport/i, /ethernet/i];
+    const collectedAddresses = [];
+
+    for (const interfaceName of Object.keys(networkInterfaces)) {
+        for (const interfaceInfo of networkInterfaces[interfaceName] || []) {
+            if (interfaceInfo && interfaceInfo.family === 'IPv4' && !interfaceInfo.internal) {
+                collectedAddresses.push({ name: interfaceName, address: interfaceInfo.address });
+            }
+        }
+    }
+
+    for (const pattern of preferredNamePatterns) {
+        const match = collectedAddresses.find((entry) => pattern.test(entry.name));
+        if (match) return match.address;
+    }
+
+    if (collectedAddresses.length > 0) return collectedAddresses[0].address;
+
+    return '127.0.0.1';
+}
+
+function getServerBaseUrl() {
+    return `http://${getLocalIPAddress()}:3000`;
+}
+
+function compareVersions(a, b) {
+    const aParts = String(a).split('.').map((part) => parseInt(part, 10) || 0);
+    const bParts = String(b).split('.').map((part) => parseInt(part, 10) || 0);
+    const maxLen = Math.max(aParts.length, bParts.length);
+
+    for (let i = 0; i < maxLen; i += 1) {
+        const left = aParts[i] || 0;
+        const right = bParts[i] || 0;
+        if (left > right) return 1;
+        if (left < right) return -1;
+    }
+    return 0;
+}
+
+async function checkForLocalUpdate() {
+    const currentVersion = app.getVersion();
+    const latestCandidates = [
+        path.join(process.cwd(), 'release', 'latest.yml'),
+        path.join(app.getAppPath(), 'release', 'latest.yml'),
+    ];
+
+    const latestFilePath = latestCandidates.find((candidate) => fs.existsSync(candidate));
+    if (!latestFilePath) {
+        await dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'Check for Updates',
+            message: 'No update metadata found.',
+            detail: `Current version: ${currentVersion}\nBuild an update package first (release/latest.yml).`,
+            buttons: ['OK'],
+        });
+        return;
+    }
+
+    const ymlText = fs.readFileSync(latestFilePath, 'utf-8');
+    const versionMatch = ymlText.match(/^version:\s*([^\r\n]+)/m);
+    const latestVersion = versionMatch ? versionMatch[1].trim() : null;
+
+    if (!latestVersion) {
+        await dialog.showMessageBox(mainWindow, {
+            type: 'error',
+            title: 'Check for Updates',
+            message: 'Could not read latest version from latest.yml.',
+            buttons: ['OK'],
+        });
+        return;
+    }
+
+    const cmp = compareVersions(latestVersion, currentVersion);
+    if (cmp > 0) {
+        const releaseFolder = path.dirname(latestFilePath);
+        const result = await dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'Update Available',
+            message: `A newer version is available: ${latestVersion}`,
+            detail: `Current version: ${currentVersion}`,
+            buttons: ['Open Update Folder', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+        });
+
+        if (result.response === 0) {
+            await shell.openPath(releaseFolder);
+        }
+        return;
+    }
+
+    await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'You are up to date',
+        message: `Current version: ${currentVersion}`,
+        detail: `Latest available version: ${latestVersion}`,
+        buttons: ['OK'],
+    });
+}
+
 let currentProjectFolder = ''; // Track current project folder basename
 let currentStrokes = [];
 let currentText = "";
@@ -27,12 +130,24 @@ let notebookState = {
     settings: currentSettings,
 };
 
-function normalizeNotebookImages(pages) {
+function generateStrokeId() {
+    return `stroke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function ensureStrokeId(stroke) {
+    if (!stroke) return stroke;
+    if (!stroke.id) stroke.id = generateStrokeId();
+    return stroke;
+}
+
+function normalizeNotebookPages(pages) {
     if (!Array.isArray(pages)) return pages;
     pages.forEach((page) => {
         if (!page || !Array.isArray(page.strokes)) return;
         page.strokes.forEach((stroke) => {
-            if (!stroke || stroke.type !== 'image') return;
+            if (!stroke) return;
+            ensureStrokeId(stroke);
+            if (stroke.type !== 'image') return;
             delete stroke.localPath;
         });
     });
@@ -52,18 +167,19 @@ io.on('connection', (socket) => {
     socket.on('stream-point', (data) => socket.broadcast.emit('remote-stream-point', data));
 
     socket.on('add-stroke-batch', (batch) => {
-        currentStrokes.push(...batch);
+        const normalizedBatch = (batch || []).map(ensureStrokeId);
+        currentStrokes.push(...normalizedBatch);
         if (notebookState.pages[notebookState.currentPageIndex]) {
             notebookState.pages[notebookState.currentPageIndex].strokes = currentStrokes;
         }
-        socket.broadcast.emit('receive-stroke-batch', batch);
+        socket.broadcast.emit('receive-stroke-batch', normalizedBatch);
     });
     socket.on('update-strokes', (strokes) => {
-        currentStrokes = strokes;
+        currentStrokes = (strokes || []).map(ensureStrokeId);
         if (notebookState.pages[notebookState.currentPageIndex]) {
-            notebookState.pages[notebookState.currentPageIndex].strokes = strokes;
+            notebookState.pages[notebookState.currentPageIndex].strokes = currentStrokes;
         }
-        socket.broadcast.emit('receive-strokes', strokes);
+        socket.broadcast.emit('receive-strokes', currentStrokes);
     });
     socket.on('update-text', (text) => {
         currentText = text;
@@ -79,7 +195,7 @@ io.on('connection', (socket) => {
     });
     socket.on('load-full-state', (state) => {
         notebookState = {
-            pages: normalizeNotebookImages(state.pages || [{ strokes: [], text: "" }]),
+            pages: normalizeNotebookPages(state.pages || [{ strokes: [], text: "" }]),
             currentPageIndex: state.currentPageIndex || 0,
             settings: { ...currentSettings, ...(state.settings || {}) },
         };
@@ -92,11 +208,25 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('receive-page-settings', currentSettings);
     });
     socket.on('update-active-page', (pageData) => {
-        const normalizedPage = { ...pageData, strokes: normalizeNotebookImages(pageData.strokes ? [{ strokes: pageData.strokes, text: pageData.text || "" }] : [{ strokes: [], text: pageData.text || "" }])[0].strokes };
+        const normalizedPage = { ...pageData, strokes: (pageData.strokes || []).map(ensureStrokeId) };
         notebookState.pages[notebookState.currentPageIndex] = normalizedPage;
         currentStrokes = normalizedPage.strokes || [];
         currentText = normalizedPage.text || "";
         socket.broadcast.emit('receive-active-page', normalizedPage);
+    });
+    socket.on('delete-strokes', ({ pageIndex, strokeIds }) => {
+        if (!Array.isArray(strokeIds) || strokeIds.length === 0) return;
+        const targetPageIndex = typeof pageIndex === 'number' ? pageIndex : notebookState.currentPageIndex;
+        const targetPage = notebookState.pages[targetPageIndex];
+        if (!targetPage || !Array.isArray(targetPage.strokes)) return;
+
+        targetPage.strokes = targetPage.strokes.filter((stroke) => !strokeIds.includes(stroke.id));
+        if (targetPageIndex === notebookState.currentPageIndex) {
+            currentStrokes = targetPage.strokes;
+        }
+
+        socket.broadcast.emit('receive-stroke-deletion', { pageIndex: targetPageIndex, strokeIds });
+        socket.broadcast.emit('receive-active-page', targetPage);
     });
     socket.on('change-page', (index) => {
         notebookState.currentPageIndex = index;
@@ -166,7 +296,7 @@ expressApp.post('/upload-asset', (req, res) => {
         fs.writeFileSync(filePath, buffer);
         console.log('[Upload] File saved to:', filePath);
 
-        const httpUrl = `http://localhost:3000/notebook-assets/${encodeURIComponent(project)}/${encodeURIComponent(fileName)}`;
+        const httpUrl = `${getServerBaseUrl()}/notebook-assets/${encodeURIComponent(project)}/${encodeURIComponent(fileName)}`;
         console.log('[Upload] Returning URL:', httpUrl);
         res.json({ success: true, url: httpUrl });
     } catch (err) {
@@ -224,12 +354,12 @@ app.whenReady().then(() => {
                             try {
                                 const parsed = JSON.parse(data);
                                 if (parsed.pages) {
-                                    notebookState.pages = parsed.pages;
+                                    notebookState.pages = normalizeNotebookPages(parsed.pages);
                                     notebookState.currentPageIndex = parsed.currentPageIndex || 0;
                                     currentStrokes = notebookState.pages[notebookState.currentPageIndex]?.strokes || [];
                                     currentText = notebookState.pages[notebookState.currentPageIndex]?.text || "";
                                 } else {
-                                    currentStrokes = parsed.strokes || [];
+                                    currentStrokes = (parsed.strokes || []).map(ensureStrokeId);
                                     currentText = parsed.text || "";
                                     notebookState.pages = [{ strokes: currentStrokes, text: currentText }];
                                     notebookState.currentPageIndex = 0;
@@ -254,7 +384,22 @@ app.whenReady().then(() => {
                 { role: 'quit' }
             ]
         },
-        { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggledevtools' }] }
+        { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggledevtools' }] },
+        {
+            label: 'Help',
+            submenu: [
+                {
+                    label: 'Check for Update',
+                    click: async () => {
+                        await checkForLocalUpdate();
+                    },
+                },
+                {
+                    label: `About ScribeSync v${app.getVersion()}`,
+                    enabled: false,
+                }
+            ]
+        }
     ];
 
     Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
@@ -272,7 +417,7 @@ ipcMain.handle('fs:saveSBN', (event, folderPath, data) => {
             if (typeof stroke.src === 'string' && !stroke.src.startsWith('data:')) return stroke.src;
             // If src is base64 but tag exists, rebuild the HTTP URL from tag
             if (typeof stroke.tag === 'string' && stroke.tag) {
-                return `http://localhost:3000/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(stroke.tag)}`;
+                return `${getServerBaseUrl()}/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(stroke.tag)}`;
             }
             // For browser-only clients, keep the base64 src as-is
             if (typeof stroke.src === 'string' && stroke.src.startsWith('data:')) return stroke.src;
@@ -316,7 +461,7 @@ ipcMain.handle('fs:saveAsset', (event, folderPath, fileName, base64Data) => {
     fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
 
     const folderName = path.basename(folderPath);
-    return `http://localhost:3000/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(fileName)}`;
+    return `${getServerBaseUrl()}/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(fileName)}`;
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
