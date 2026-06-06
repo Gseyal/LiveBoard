@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron')
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const zlib = require('zlib');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -290,13 +291,13 @@ expressApp.post('/upload-asset', (req, res) => {
         if (base64.includes(',')) {
             base64 = base64.split(',')[1];
         }
-
         const buffer = Buffer.from(base64, 'base64');
-        const filePath = path.join(assetsDir, fileName);
-        fs.writeFileSync(filePath, buffer);
-        console.log('[Upload] File saved to:', filePath);
+        const outFileName = fileName;
+        const outPath = path.join(assetsDir, outFileName);
+        fs.writeFileSync(outPath, buffer);
+        console.log('[Upload] File saved to:', outPath);
 
-        const httpUrl = `${getServerBaseUrl()}/notebook-assets/${encodeURIComponent(project)}/${encodeURIComponent(fileName)}`;
+        const httpUrl = `${getServerBaseUrl()}/notebook-assets/${encodeURIComponent(project)}/${encodeURIComponent(outFileName)}`;
         console.log('[Upload] Returning URL:', httpUrl);
         res.json({ success: true, url: httpUrl });
     } catch (err) {
@@ -349,35 +350,48 @@ app.whenReady().then(() => {
                             properties: ['openFile'], filters: [{ name: 'ScribeSync Notebook', extensions: ['sbn'] }]
                         });
                         if (!result.canceled && result.filePaths.length > 0) {
-                            const filePath = result.filePaths[0];
-                            const data = fs.readFileSync(filePath, 'utf-8');
-                            try {
-                                const parsed = JSON.parse(data);
-                                if (parsed.pages) {
-                                    notebookState.pages = normalizeNotebookPages(parsed.pages);
-                                    notebookState.currentPageIndex = parsed.currentPageIndex || 0;
-                                    currentStrokes = notebookState.pages[notebookState.currentPageIndex]?.strokes || [];
-                                    currentText = notebookState.pages[notebookState.currentPageIndex]?.text || "";
-                                } else {
-                                    currentStrokes = (parsed.strokes || []).map(ensureStrokeId);
-                                    currentText = parsed.text || "";
-                                    notebookState.pages = [{ strokes: currentStrokes, text: currentText }];
-                                    notebookState.currentPageIndex = 0;
+                                    const filePath = result.filePaths[0];
+                                    try {
+                                        const raw = fs.readFileSync(filePath);
+                                        let dataStr = null;
+                                        // detect gzip by magic bytes 0x1f 0x8b
+                                        if (raw && raw.length >= 2 && raw[0] === 0x1f && raw[1] === 0x8b) {
+                                            try {
+                                                dataStr = zlib.gunzipSync(raw).toString('utf-8');
+                                            } catch (gzErr) {
+                                                console.error('Failed to gunzip .sbn file:', gzErr);
+                                                dataStr = raw.toString('utf-8');
+                                            }
+                                        } else {
+                                            dataStr = raw.toString('utf-8');
+                                        }
+
+                                        const parsed = JSON.parse(dataStr);
+                                        if (parsed.pages) {
+                                            notebookState.pages = normalizeNotebookPages(parsed.pages);
+                                            notebookState.currentPageIndex = parsed.currentPageIndex || 0;
+                                            currentStrokes = notebookState.pages[notebookState.currentPageIndex]?.strokes || [];
+                                            currentText = notebookState.pages[notebookState.currentPageIndex]?.text || "";
+                                        } else {
+                                            currentStrokes = (parsed.strokes || []).map(ensureStrokeId);
+                                            currentText = parsed.text || "";
+                                            notebookState.pages = [{ strokes: currentStrokes, text: currentText }];
+                                            notebookState.currentPageIndex = 0;
+                                        }
+                                        const folderPath = path.dirname(filePath);
+                                        const baseName = path.basename(folderPath);
+                                        currentProjectFolder = baseName; // Update current project folder
+                                        console.log('[Menu] Notebook opened:', baseName);
+                                        projectMap[baseName] = folderPath;
+                                        const pName = `📁 ${baseName}`;
+                                        if (parsed.settings) currentSettings = { ...currentSettings, ...parsed.settings, projectName: pName };
+                                        else currentSettings.projectName = pName;
+                                        notebookState.settings = currentSettings;
+                                        io.sockets.emit('set-project-folder', baseName); // Broadcast to all connected clients
+                                        console.log('[Socket] Broadcasting project folder:', baseName);
+                                        mainWindow.webContents.send('menu-action', { action: 'open', data: dataStr, folderPath: path.dirname(filePath), fileName: path.basename(filePath) });
+                                    } catch (e) { console.error("Error opening notebook file:", e); }
                                 }
-                                const folderPath = path.dirname(filePath);
-                                const baseName = path.basename(folderPath);
-                                currentProjectFolder = baseName; // Update current project folder
-                                console.log('[Menu] Notebook opened:', baseName);
-                                projectMap[baseName] = folderPath;
-                                const pName = `📁 ${baseName}`;
-                                if (parsed.settings) currentSettings = { ...currentSettings, ...parsed.settings, projectName: pName };
-                                else currentSettings.projectName = pName;
-                                notebookState.settings = currentSettings;
-                                io.sockets.emit('set-project-folder', baseName); // Broadcast to all connected clients
-                                console.log('[Socket] Broadcasting project folder:', baseName);
-                            } catch (e) { console.error("Error parsing notebook file:", e); }
-                            mainWindow.webContents.send('menu-action', { action: 'open', data: data, folderPath: path.dirname(filePath), fileName: path.basename(filePath) });
-                        }
                     }
                 },
                 { type: 'separator' },
@@ -438,12 +452,21 @@ ipcMain.handle('fs:saveSBN', (event, folderPath, data) => {
             });
         }
 
-        fs.writeFileSync(path.join(folderPath, `${folderName}.sbn`), JSON.stringify(parsed, null, 2));
+        const outBuf = zlib.gzipSync(JSON.stringify(parsed, null, 2));
+        fs.writeFileSync(path.join(folderPath, `${folderName}.sbn`), outBuf);
         return true;
     } catch (e) {
         console.error('fs:saveSBN error:', e);
-        fs.writeFileSync(path.join(folderPath, `${folderName}.sbn`), data);
-        return false;
+        try {
+            const outBuf = zlib.gzipSync(data);
+            fs.writeFileSync(path.join(folderPath, `${folderName}.sbn`), outBuf);
+            return true;
+        } catch (e2) {
+            console.error('fs:saveSBN fallback write failed:', e2);
+            // last-resort: write raw data
+            fs.writeFileSync(path.join(folderPath, `${folderName}.sbn`), data);
+            return false;
+        }
     }
 });
 
@@ -457,11 +480,19 @@ ipcMain.handle('fs:saveAsset', (event, folderPath, fileName, base64Data) => {
     const assetsDir = path.join(folderPath, 'assets');
     if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
 
-    const filePath = path.join(assetsDir, fileName);
-    fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
-
-    const folderName = path.basename(folderPath);
-    return `${getServerBaseUrl()}/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(fileName)}`;
+    try {
+        let base64 = base64Data;
+        if (base64.includes(',')) base64 = base64.split(',')[1];
+        const buffer = Buffer.from(base64, 'base64');
+        const outFileName = fileName;
+        const outPath = path.join(assetsDir, outFileName);
+        fs.writeFileSync(outPath, buffer);
+        const folderName = path.basename(folderPath);
+        return `${getServerBaseUrl()}/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(outFileName)}`;
+    } catch (err) {
+        console.error('fs:saveAsset error:', err);
+        throw err;
+    }
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

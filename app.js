@@ -320,11 +320,12 @@ window.addEventListener('paste', async (e) => {
             reader.onload = async (event) => {
                 const img = new Image();
                 img.onload = async () => {
-                    const tmpCanvas = document.createElement('canvas'); const MAX_WIDTH = 600; let w = img.width, h = img.height;
-                    if (w > MAX_WIDTH) { h = Math.round((h * MAX_WIDTH) / w); w = MAX_WIDTH; }
+                    const tmpCanvas = document.createElement('canvas');
+                    const w = img.width;
+                    const h = img.height;
                     tmpCanvas.width = w; tmpCanvas.height = h; tmpCanvas.getContext('2d').drawImage(img, 0, 0, w, h);
                     baseImgWidth = w; baseImgHeight = h; currentImageScale = 1;
-                    const dataUrl = tmpCanvas.toDataURL('image/jpeg', 0.8);
+                    const dataUrl = tmpCanvas.toDataURL('image/png');
                     // keep the data URL for broadcasting to remote (browser) clients
                     imgPreview.dataset.dataUrl = dataUrl;
                     let finalSrc = dataUrl;
@@ -333,7 +334,7 @@ window.addEventListener('paste', async (e) => {
                     if (isElectron && currentNotebookPath && ipcRenderer) {
                         try {
                             const base64 = dataUrl.split(',')[1];
-                            const fileName = `img-${Date.now()}.jpg`;
+                            const fileName = `img-${Date.now()}.png`;
                             const savedFileUrl = await ipcRenderer.invoke('fs:saveAsset', currentNotebookPath, fileName, base64);
                             finalSrc = savedFileUrl;
                             assetTag = fileName;
@@ -346,7 +347,7 @@ window.addEventListener('paste', async (e) => {
                     else if (!isElectron && currentProjectFolder) {
                         console.log('Browser uploading image. Project folder:', currentProjectFolder);
                         try {
-                            const fileName = `img-${Date.now()}.jpg`;
+                            const fileName = `img-${Date.now()}.png`;
                             const response = await fetch('/upload-asset', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
