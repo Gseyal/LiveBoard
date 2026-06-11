@@ -30,14 +30,12 @@ let currentTool = 'pen';
 let currentNotebookPath = null;
 let currentZoom = 1.0;
 let eraserMode = 'delete'; 
-let isIpadMode = false;
+let isIpadMode = !isElectron; // Auto-detects browser
 let totalNotebookPages = 0;
 
-// Sparse Array for Lazy Loading
 let notebookPages = []; 
 let activePageIndex = 0; 
 
-// --- HIGH RES CANVAS CONSTANTS ---
 const CANVAS_W = 2246;  
 const CANVAS_H = 1588;
 
@@ -56,7 +54,7 @@ let selectedItemIndex = -1; let selectedItemPage = -1;
 let isTransforming = false; let transformMode = null; 
 let dragOffsetX = 0, dragOffsetY = 0;
 
-// --- UTILITIES & MATH ---
+// --- UTILITIES ---
 function generateStrokeId() { return `stroke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`; }
 
 function updateCanvasInteractivity() {
@@ -145,8 +143,6 @@ const pageObserver = new IntersectionObserver(async (entries) => {
         const pageIndex = parseInt(entry.target.dataset.pageIndex);
 
         if (entry.isIntersecting) {
-             
-            
             if (!entry.target.classList.contains('mounted')) {
                 entry.target.classList.add('mounted');
 
@@ -166,10 +162,7 @@ const pageObserver = new IntersectionObserver(async (entries) => {
                 entry.target.classList.remove('mounted');
                 syncPageToDisk(pageIndex); 
                 entry.target.innerHTML = ''; 
-                
-                // Flush image cache for this page
                 Object.keys(imageCache).forEach(k => delete imageCache[k]);
-                
             }
         }
     }
@@ -199,14 +192,13 @@ function buildPageUI(pageIndex, containerDiv) {
     textDiv.contentEditable = true;
     textDiv.innerHTML = escapeHtml(notebookPages[pageIndex].text || '').replace(/\n/g, '<br>');
     
-    // Explicitly set active page when interacting with text layer
     textDiv.addEventListener('focus', () => { activePageIndex = pageIndex; });
     textDiv.addEventListener('click', () => { activePageIndex = pageIndex; });
 
     let typingTimer;
     textDiv.addEventListener('input', (e) => {
         clearTimeout(typingTimer);
-        notebookPages[pageIndex].text = e.target.innerHTML;
+        notebookPages[pageIndex].text = e.target.innerText; // FIX: Use innerText for clean plain text
         typingTimer = setTimeout(() => pushPageUpdate(pageIndex), 500); 
     });
 
@@ -222,19 +214,16 @@ function buildPageUI(pageIndex, containerDiv) {
     requestRedraw(pageIndex);
 }
 
-// Infinite Scroll Trigger & Active Page Tracker
 if (scrollWrapper) {
     scrollWrapper.addEventListener('scroll', () => {
         if (isElectron && !currentNotebookPath) return;
         if (!isElectron && totalNotebookPages === 0) return;
 
-        // 1. Accurately detect the ACTIVE page (the one occupying the most screen space)
         const pageContainers = document.querySelectorAll('.a4-page-container');
         let maxVisibleArea = 0;
         
         pageContainers.forEach(container => {
             const rect = container.getBoundingClientRect();
-            // Math.max(0) ensures negative visibility (off-screen pages) are strictly ignored
             const visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 60));
             
             if (visibleHeight > maxVisibleArea) {
@@ -243,7 +232,6 @@ if (scrollWrapper) {
             }
         });
 
-        // 2. Infinite Scroll Logic
         if (scrollWrapper.scrollTop + scrollWrapper.clientHeight >= scrollWrapper.scrollHeight - 300) {
             const newIndex = totalNotebookPages;
             totalNotebookPages++;
@@ -259,6 +247,7 @@ if (scrollWrapper) {
         }
     });
 }
+
 // --- RENDER ENGINE ---
 let renderFlags = {};
 
@@ -343,7 +332,10 @@ function attachPointerEvents(canvas, pageIndex) {
     document.addEventListener('contextmenu', (e) => { if (isIpadMode) e.preventDefault(); });
 
     canvas.addEventListener('pointerdown', (e) => {
+        // --- TOUCH LOCK RESTORED ---
+        // Blocks fingers/palms unless you are selecting or placing an image!
         if (isIpadMode && e.pointerType === 'touch' && currentTool !== 'select' && currentTool !== 'image-placer') return;
+        
         activePageIndex = pageIndex; 
         const coords = getCoords(e, canvas);
 
@@ -383,12 +375,13 @@ function attachPointerEvents(canvas, pageIndex) {
         const aSize = brushSizeSlider ? parseInt(brushSizeSlider.value, 10) : 3;
         currentStroke = { id: generateStrokeId(), type: 'stroke', color: eraserMode === 'white' && isEraser ? '#ffffff' : aColor, isEraser: isEraser, eraserMode: isEraser ? eraserMode : null, size: aSize, path: [{ x: lastX, y: lastY }] };
         
-        // Broadcast EXACT page number to network
         socket.emit('start-stream', { pageIndex: pageIndex, x: lastX, y: lastY });
     });
 
     canvas.addEventListener('pointermove', (e) => {
+        // --- TOUCH LOCK RESTORED ---
         if (isIpadMode && e.pointerType === 'touch' && currentTool !== 'select' && currentTool !== 'image-placer') return;
+        
         const coords = getCoords(e, canvas);
 
         if (currentTool === 'image-placer' && imgPreview.style.display === 'block') { 
@@ -420,7 +413,6 @@ function attachPointerEvents(canvas, pageIndex) {
         
         currentStroke.path.push({ x: coords.x, y: coords.y }); 
         
-        // Broadcast exact page to network
         socket.emit('stream-point', { 
             pageIndex: pageIndex, color: currentStroke.color, isEraser: currentStroke.isEraser, 
             eraserMode: currentStroke.eraserMode, size: currentStroke.size, 
@@ -435,7 +427,9 @@ function attachPointerEvents(canvas, pageIndex) {
             requestRedraw(pageIndex); pushPageUpdate(pageIndex); return; 
         }
         
-        if (isIpadMode && e.pointerType === 'touch') return; 
+        // --- TOUCH LOCK RESTORED ---
+        if (isIpadMode && e.pointerType === 'touch' && currentTool !== 'select' && currentTool !== 'image-placer') return;
+        
         if (!isDrawing) return;
         isDrawing = false;
         
@@ -453,12 +447,12 @@ function attachPointerEvents(canvas, pageIndex) {
                 });
                 
                 if (removedStrokeIds.length > 0) {
-                    requestRedraw(pageIndex); syncPageToDisk(pageIndex);
+                    requestRedraw(pageIndex); 
                     socket.emit('delete-strokes', { pageIndex: pageIndex, strokeIds: removedStrokeIds });
                 }
             } else {
                 pageStrokes.push(currentStroke); 
-                requestRedraw(pageIndex); syncPageToDisk(pageIndex);
+                requestRedraw(pageIndex); 
                 socket.emit('add-stroke-batch', { pageIndex: pageIndex, strokes: [currentStroke] });
             }
             currentStroke = {}; 
@@ -468,7 +462,6 @@ function attachPointerEvents(canvas, pageIndex) {
     canvas.addEventListener('pointerup', handlePointerUp); 
     canvas.addEventListener('pointerout', handlePointerUp);
 }
-
 // --- UI EVENT LISTENERS ---
 if(brushSizeSlider) brushSizeSlider.addEventListener('input', (e) => { if(brushSizeVal) brushSizeVal.innerText = e.target.value; });
 
@@ -498,7 +491,6 @@ if(toggleBtn) {
     });
 }
 
-// Ensure iPad clearing targets the activePageIndex strictly
 if(clearBtn) {
     clearBtn.addEventListener('click', () => { 
         if (confirm(`Clear all ink on Page ${activePageIndex + 1}?`)) { 
@@ -537,7 +529,6 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('paste', async (e) => {
-    // Only iPad Mode can paste images
     if (!isIpadMode) return;
     if (document.activeElement && document.activeElement.classList.contains('page-text-layer')) return;
 
@@ -577,22 +568,20 @@ if (isElectron) {
     ipcRenderer.on('menu-action', (event, payload) => {
         if (payload.action === 'new') {
             currentNotebookPath = payload.path;
-            const pName = `📁 ${currentNotebookPath.split(/[\\/]/).pop()}`;
-            if(projectNameDisplay) projectNameDisplay.innerText = pName;
+            if(projectNameDisplay) projectNameDisplay.innerText = `📁 ${payload.projectName}`;
             
             notebookPages = []; 
             activePageIndex = 0;
             initVirtualScroll(1);
             syncSettingsToDisk(); syncPageToDisk(0);
             
-            socket.emit('host-set-full-state', { isOpen: true, totalPages: 1, settings: { theme: bgSelect ? bgSelect.value : 'white', projectName: pName } });
+            socket.emit('host-set-full-state', { isOpen: true, totalPages: 1, settings: { theme: bgSelect ? bgSelect.value : 'white', projectName: payload.projectName } });
             updateCanvasInteractivity();
         } 
         else if (payload.action === 'open') {
             const data = JSON.parse(payload.data);
             currentNotebookPath = payload.folderPath;
-            const pName = `📁 ${currentNotebookPath.split(/[\\/]/).pop()}`;
-            if(projectNameDisplay) projectNameDisplay.innerText = pName;
+            if(projectNameDisplay) projectNameDisplay.innerText = `📁 ${payload.projectName}`;
             
             notebookPages = []; 
             notebookPages[0] = data.firstPage || { strokes: [], text: "" };
@@ -600,7 +589,7 @@ if (isElectron) {
             
             initVirtualScroll(data.totalPages || 1);
             
-            socket.emit('host-set-full-state', { isOpen: true, totalPages: data.totalPages || 1, settings: { theme: data.settings ? data.settings.theme : 'white', projectName: pName } });
+            socket.emit('host-set-full-state', { isOpen: true, totalPages: data.totalPages || 1, settings: { theme: data.settings ? data.settings.theme : 'white', projectName: payload.projectName } });
             updateCanvasInteractivity();
         }
     });
@@ -691,11 +680,31 @@ if (exportBtn) {
     });
 }
 
+// --- IPAD SYNCING MODAL & NETWORK REFRESH ---
 const shareBtn = document.getElementById('share-btn'); 
 const qrModal = document.getElementById('qr-modal'); 
 const closeModalBtn = document.getElementById('close-modal-btn'); 
 const urlInput = document.getElementById('local-url-input'); 
 const qrContainer = document.getElementById('qrcode');
+
+const refreshNetBtn = document.createElement('button');
+refreshNetBtn.innerHTML = "🔄 Refresh Server Connection";
+refreshNetBtn.className = "btn";
+refreshNetBtn.style.cssText = "margin-top: 15px; width: 100%; background-color: #ffe0b2; font-weight: bold; padding: 10px;";
+if (qrContainer && qrContainer.parentElement) qrContainer.parentElement.appendChild(refreshNetBtn);
+
+refreshNetBtn.addEventListener('click', async () => {
+    if (!isElectron) return;
+    refreshNetBtn.innerHTML = "⏳ Rebooting Local Server...";
+    const newUrl = await ipcRenderer.invoke('network:refresh');
+    if(urlInput) urlInput.value = newUrl;
+    if(qrContainer) { 
+        qrContainer.innerHTML = ''; 
+        new QRCode(qrContainer, { text: newUrl, width: 200, height: 200 }); 
+    }
+    refreshNetBtn.innerHTML = "✅ Network Refreshed!";
+    setTimeout(() => refreshNetBtn.innerHTML = "🔄 Refresh Server Connection", 3000);
+});
 
 if(shareBtn) shareBtn.addEventListener('click', () => { 
     if (!isElectron) return;
@@ -737,7 +746,6 @@ socket.on('deliver-page', (data) => {
     }
 });
 
-// MULTI-PAGE DESYNC FIX (Tracking pen per-page)
 let remoteStreams = {}; 
 
 socket.on('remote-start-stream', (data) => { 
@@ -774,9 +782,9 @@ socket.on('update-active-page', (data) => {
         notebookPages[data.pageIndex] = data.data;
         requestRedraw(data.pageIndex);
         const textDiv = document.querySelector(`.a4-page-container[data-page-index="${data.pageIndex}"] .page-text-layer`);
-        if(textDiv && document.activeElement !== textDiv) textDiv.innerHTML = data.data.text || '';
-        
-        syncPageToDisk(data.pageIndex); 
+        if(textDiv && document.activeElement !== textDiv) {
+            textDiv.innerHTML = escapeHtml(data.data.text || '').replace(/\n/g, '<br>');
+        }
     }
 });
 
@@ -784,7 +792,6 @@ socket.on('add-stroke-batch', (data) => {
     if(notebookPages[data.pageIndex]) {
         notebookPages[data.pageIndex].strokes.push(...data.strokes);
         requestRedraw(data.pageIndex);
-        syncPageToDisk(data.pageIndex); 
     }
 });
 
@@ -792,7 +799,6 @@ socket.on('delete-strokes', (data) => {
     if(notebookPages[data.pageIndex]) {
         notebookPages[data.pageIndex].strokes = notebookPages[data.pageIndex].strokes.filter(s => !data.strokeIds.includes(s.id));
         requestRedraw(data.pageIndex);
-        syncPageToDisk(data.pageIndex); 
     }
 });
 
