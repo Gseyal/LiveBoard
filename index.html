@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ScribeSync</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -14,56 +14,49 @@
     <div id="toolbar">
         <div class="tool-group">
             <button id="export-btn" class="btn">🖨️ Export PDF</button>
-            <span id="current-notebook-name" style="margin-left:10px; font-weight:bold; color:#2196f3; font-size: 13px;">No Project</span>
+            <span id="current-notebook-name" style="margin-left:10px; font-weight:bold; color:#2196f3; font-size: 13px;">No Notebook Open</span>
         </div>
 
         <div class="tool-group" style="margin-left: auto; padding-left: 15px; border-left: 2px solid #ccc;">
             <button id="select-btn" class="btn tool-btn" style="padding: 8px;">🖱️ Select</button>
-            <button id="delete-selected-btn" class="btn tool-btn danger-btn" style="padding: 8px;">🗑️ Delete</button>
+            <button id="delete-selected-btn" class="btn" style="background:#ffebee; color:#c62828; display:none;">🗑️ Delete Item</button>
             <button id="pen-btn" class="btn tool-btn active" style="padding: 8px;">🖊️ Pen</button>
-            <input type="color" id="pen-color" value="#006eff">
             <button id="eraser-btn" class="btn tool-btn" style="padding: 8px;">🧽 Eraser</button>
-            <button id="eraser-mode-btn" class="btn" style="padding: 5px 8px; font-size: 12px; display:none;">Delete</button>
-            <label style="margin-left: 5px;">Size: <span id="brush-size-val">3</span></label>
-            <input type="range" id="brush-size" min="1" max="50" value="3" style="width: 70px;">
+            <button id="eraser-mode-btn" class="btn" style="display: none; background: #ffcdd2;">Delete</button>
         </div>
 
         <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
-            <label>Zoom:</label>
-            <input type="range" id="zoom-slider" min="30" max="300" value="100" style="width: 80px;">
-            <span id="zoom-display" style="font-weight:bold; font-size: 13px; width: 45px; text-align: right;">100%</span>
-        </div>
-
-        <div id="pagination-controls" class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc; display: none;">
-            <button id="prev-page-btn" class="btn" style="padding: 5px 10px;">◀</button>
-            <span id="page-display" style="font-weight:bold; font-size: 13px; width: 65px; text-align: center;">Page 1/1</span>
-            <button id="next-page-btn" class="btn" style="padding: 5px 10px;">▶</button>
-            <button id="add-page-btn" class="btn" style="padding: 5px 10px; color: #2196f3; font-weight: bold;">➕ New</button>
+            <label for="pen-color">Color:</label>
+            <input type="color" id="pen-color" value="#000000" style="width: 30px; height: 30px; border:none; cursor:pointer; padding:0;">
+            
+            <label for="brush-size" style="margin-left: 10px;">Size: <span id="brush-size-val">3</span></label>
+            <input type="range" id="brush-size" min="1" max="50" value="3" style="width: 80px;">
         </div>
 
         <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
-            <label>Paper:</label>
-            <select id="page-size">
-                <option value="infinite">Infinite Scroll</option>
-                <option value="a4">A4 Page</option>
-            </select>
             <select id="bg-color">
-                <option value="white">Light</option>
-                <option value="black">Dark</option>
+                <option value="white">Light Theme</option>
+                <option value="black">Dark Theme</option>
             </select>
+            <label style="margin-left: 10px;">Zoom: <span id="zoom-display">100%</span></label>
+            <input type="range" id="zoom-slider" min="50" max="200" value="100" style="width: 80px;">
         </div>
 
         <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
             <button id="mode-toggle" class="btn">💻 Laptop Mode</button>
-            <button id="share-btn" class="btn" style="background:#e8f5e9; border-color:#81c784; color:#2e7d32;">📱 iPad</button>
-            <button id="clear-btn" class="btn clear-btn">🗑️ Clear</button>
+            <button id="share-btn" class="btn" style="background:#e8f5e9; border-color:#81c784; color:#2e7d32;">📱 iPad Sync</button>
+            <button id="clear-btn" class="btn" style="background:#fff9c4; color:#f57f17;">🗑️ Clear Page</button>
         </div>
     </div>
 
     <div id="notebook-container">
         <div id="scroll-wrapper">
-            <div id="text-layer" contenteditable="true" data-placeholder="Click here to type, or use the pen to draw..."></div>
-            <canvas id="ink-layer"></canvas>
+            <div id="page-stack">
+                <div id="empty-state" style="margin: auto; margin-top: 20vh; text-align: center; color: #888;">
+                    <h2>Welcome to ScribeSync</h2>
+                    <p>Go to <strong>File > New Notebook Folder</strong> or <strong>Open Notebook Folder</strong> to start.</p>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -72,9 +65,8 @@
             <h3>Connect your iPad</h3>
             <p>Scan this code with your iPad camera:</p>
             <div id="qrcode"></div>
-            <input type="text" id="local-url-input" readonly>
-            <button id="copy-url-btn" class="btn" style="margin-top: 10px; width: 100%;">📋 Copy Link</button>
-            <button id="close-modal-btn" class="btn clear-btn" style="margin-top: 10px; width: 100%;">Close</button>
+            <input type="text" id="local-url-input" readonly style="width:100%; padding:8px; margin-top:10px; text-align:center; border:1px solid #ccc; border-radius:4px;">
+            <button id="close-modal-btn" class="btn" style="margin-top: 15px; width: 100%;">Close</button>
         </div>
     </div>
 

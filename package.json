@@ -8,28 +8,29 @@
     "build": "electron-builder --win"
   },
   "build": {
-  "appId": "com.scribesync.app",
-  "productName": "ScribeSync",
-  "directories": {
-    "output": "release",
-    "buildResources": "icon"
+    "appId": "com.scribesync.app",
+    "productName": "ScribeSync",
+    "directories": {
+      "output": "release",
+      "buildResources": "icon"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "icon/scribe_sync_icon_protected.ico"
+    },
+    "nsis": {
+      "installerIcon": "icon/scribe_sync_icon_protected.ico",
+      "shortcutName": "ScribeSync",
+      "uninstallerIcon": "icon/scribe_sync_icon_protected.ico",
+      "installerHeaderIcon": "icon/scribe_sync_icon_protected.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
-  "win": {
-    "target": "nsis",
-    "icon": "icon/scribe_sync_icon_protected.ico"
-  },
-  "nsis": {
-    "installerIcon": "icon/scribe_sync_icon_protected.ico",
-    "shortcutName": "ScribeSync",
-    "uninstallerIcon": "icon/scribe_sync_icon_protected.ico",
-    "installerHeaderIcon": "icon/scribe_sync_icon_protected.ico",
-    "createDesktopShortcut": true,
-    "createStartMenuShortcut": true,
-    "oneClick": false,
-    "allowToChangeInstallationDirectory": true
-  }
-},
   "dependencies": {
+    "better-sqlite3": "^12.10.0",
     "express": "^4.18.2",
     "socket.io": "^4.7.2"
   },
