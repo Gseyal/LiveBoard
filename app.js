@@ -5,6 +5,7 @@ const jsPDF = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : null;
 const serverIP = window.location.hostname || 'localhost';
 const socket = io(`http://${serverIP}:3000`);
 
+// DOM Elements
 const scrollWrapper = document.getElementById('scroll-wrapper');
 const pageStack = document.getElementById('page-stack'); 
 const container = document.getElementById('notebook-container');
@@ -24,6 +25,7 @@ const projectNameDisplay = document.getElementById('current-notebook-name');
 const zoomSlider = document.getElementById('zoom-slider');
 const zoomDisplay = document.getElementById('zoom-display');
 
+// App State
 let currentTool = 'pen'; 
 let currentNotebookPath = null;
 let currentZoom = 1.0;
@@ -31,16 +33,11 @@ let eraserMode = 'delete';
 let isIpadMode = false;
 let totalNotebookPages = 0;
 
-function updateCanvasInteractivity() {
-    if (!container) return;
-    if (!isIpadMode && (currentTool === 'pen' || currentTool === 'eraser')) container.classList.add('text-mode-active');
-    else container.classList.remove('text-mode-active');
-}
-
-// Sparse Array: Pages are 'undefined' until lazy-loaded!
+// Sparse Array for Lazy Loading
 let notebookPages = []; 
 let activePageIndex = 0; 
 
+// --- HIGH RES CANVAS CONSTANTS ---
 const CANVAS_W = 2246;  
 const CANVAS_H = 1588;
 
@@ -59,7 +56,14 @@ let selectedItemIndex = -1; let selectedItemPage = -1;
 let isTransforming = false; let transformMode = null; 
 let dragOffsetX = 0, dragOffsetY = 0;
 
+// --- UTILITIES & MATH ---
 function generateStrokeId() { return `stroke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`; }
+
+function updateCanvasInteractivity() {
+    if (!container) return;
+    if (!isIpadMode && (currentTool === 'pen' || currentTool === 'eraser')) container.classList.add('text-mode-active');
+    else container.classList.remove('text-mode-active');
+}
 
 function perpendicularDistance(point, lineStart, lineEnd) {
     let dx = lineEnd.x - lineStart.x; let dy = lineEnd.y - lineStart.y;
@@ -105,6 +109,16 @@ function isStrokeHitByEraser(strokePath, eraserPath, threshold) {
     return strokePath.some((sPt) => eraserPath.some((ePt) => distanceToSegment(ePt, sPt, sPt) <= threshold));
 }
 
+function getCoords(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+}
+
+function escapeHtml(text) { return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+// --- FILE SYNCING ENGINE ---
 let saveTimers = {};
 
 function syncSettingsToDisk() {
@@ -125,36 +139,22 @@ function pushPageUpdate(pageIndex) {
     syncPageToDisk(pageIndex);
 }
 
-function getCoords(e, canvas) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
-}
-
-function escapeHtml(text) { return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
-
 // --- DOM VIRTUALIZATION ENGINE ---
-
-// The observer monitors scroll position and mounts/unmounts heavy canvases
 const pageObserver = new IntersectionObserver(async (entries) => {
     for (const entry of entries) {
         const pageIndex = parseInt(entry.target.dataset.pageIndex);
 
         if (entry.isIntersecting) {
-            activePageIndex = pageIndex; 
+             
             
-            // Mount the Canvas if it isn't already there
             if (!entry.target.classList.contains('mounted')) {
                 entry.target.classList.add('mounted');
 
-                // 1. LAZY LOAD DATA
                 if (!notebookPages[pageIndex]) {
                     if (isElectron) {
                         notebookPages[pageIndex] = await ipcRenderer.invoke('fs:loadPage', currentNotebookPath, pageIndex);
                         buildPageUI(pageIndex, entry.target);
                     } else {
-                        // iPad asks Server for data. We build UI when the server responds!
                         socket.emit('request-page', pageIndex);
                     }
                 } else {
@@ -162,20 +162,18 @@ const pageObserver = new IntersectionObserver(async (entries) => {
                 }
             }
         } else {
-            // Unmount the Canvas to free up RAM!
             if (entry.target.classList.contains('mounted')) {
                 entry.target.classList.remove('mounted');
-                syncPageToDisk(pageIndex); // Safe save before destruction
-                
-                // Destroy heavy DOM elements, leaving the empty skeleton
+                syncPageToDisk(pageIndex); 
                 entry.target.innerHTML = ''; 
                 
-                // Flush image cache to prevent memory leaks
+                // Flush image cache for this page
                 Object.keys(imageCache).forEach(k => delete imageCache[k]);
+                
             }
         }
     }
-}, { root: scrollWrapper, rootMargin: '1500px 0px' }); // Render pages 1500px before they appear on screen
+}, { root: scrollWrapper, rootMargin: '1500px 0px' }); 
 
 function initVirtualScroll(totalPages) {
     if (!pageStack) return;
@@ -183,7 +181,6 @@ function initVirtualScroll(totalPages) {
     pageObserver.disconnect();
     totalNotebookPages = totalPages;
 
-    // Create empty skeletons for every page
     for (let i = 0; i < totalPages; i++) {
         const containerDiv = document.createElement('div');
         containerDiv.className = 'a4-page-container';
@@ -193,16 +190,19 @@ function initVirtualScroll(totalPages) {
     }
 }
 
-// Injects the actual Text and Canvas layers into a skeleton
 function buildPageUI(pageIndex, containerDiv) {
     if (!notebookPages[pageIndex]) return; 
-    containerDiv.innerHTML = ''; // Clear skeleton
+    containerDiv.innerHTML = ''; 
 
     const textDiv = document.createElement('div');
     textDiv.className = 'page-text-layer';
     textDiv.contentEditable = true;
     textDiv.innerHTML = escapeHtml(notebookPages[pageIndex].text || '').replace(/\n/g, '<br>');
     
+    // Explicitly set active page when interacting with text layer
+    textDiv.addEventListener('focus', () => { activePageIndex = pageIndex; });
+    textDiv.addEventListener('click', () => { activePageIndex = pageIndex; });
+
     let typingTimer;
     textDiv.addEventListener('input', (e) => {
         clearTimeout(typingTimer);
@@ -222,29 +222,44 @@ function buildPageUI(pageIndex, containerDiv) {
     requestRedraw(pageIndex);
 }
 
-// Infinite Scroll Trigger
+// Infinite Scroll Trigger & Active Page Tracker
 if (scrollWrapper) {
     scrollWrapper.addEventListener('scroll', () => {
         if (isElectron && !currentNotebookPath) return;
         if (!isElectron && totalNotebookPages === 0) return;
 
-        // If user scrolls to the bottom, append a new skeleton!
+        // 1. Accurately detect the ACTIVE page (the one occupying the most screen space)
+        const pageContainers = document.querySelectorAll('.a4-page-container');
+        let maxVisibleArea = 0;
+        
+        pageContainers.forEach(container => {
+            const rect = container.getBoundingClientRect();
+            // Math.max(0) ensures negative visibility (off-screen pages) are strictly ignored
+            const visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 60));
+            
+            if (visibleHeight > maxVisibleArea) {
+                maxVisibleArea = visibleHeight;
+                activePageIndex = parseInt(container.dataset.pageIndex);
+            }
+        });
+
+        // 2. Infinite Scroll Logic
         if (scrollWrapper.scrollTop + scrollWrapper.clientHeight >= scrollWrapper.scrollHeight - 300) {
             const newIndex = totalNotebookPages;
             totalNotebookPages++;
-            notebookPages[newIndex] = { strokes: [], text: "" }; // Initialize empty data
+            notebookPages[newIndex] = { strokes: [], text: "" }; 
             
             const containerDiv = document.createElement('div');
             containerDiv.className = 'a4-page-container';
             containerDiv.dataset.pageIndex = newIndex;
             pageStack.appendChild(containerDiv);
             
-            pageObserver.observe(containerDiv); // Track the new page
+            pageObserver.observe(containerDiv); 
             pushPageUpdate(newIndex); 
         }
     });
 }
-
+// --- RENDER ENGINE ---
 let renderFlags = {};
 
 function requestRedraw(pageIndex) {
@@ -368,7 +383,8 @@ function attachPointerEvents(canvas, pageIndex) {
         const aSize = brushSizeSlider ? parseInt(brushSizeSlider.value, 10) : 3;
         currentStroke = { id: generateStrokeId(), type: 'stroke', color: eraserMode === 'white' && isEraser ? '#ffffff' : aColor, isEraser: isEraser, eraserMode: isEraser ? eraserMode : null, size: aSize, path: [{ x: lastX, y: lastY }] };
         
-        socket.emit('start-stream', { x: lastX, y: lastY });
+        // Broadcast EXACT page number to network
+        socket.emit('start-stream', { pageIndex: pageIndex, x: lastX, y: lastY });
     });
 
     canvas.addEventListener('pointermove', (e) => {
@@ -404,7 +420,12 @@ function attachPointerEvents(canvas, pageIndex) {
         
         currentStroke.path.push({ x: coords.x, y: coords.y }); 
         
-        socket.emit('stream-point', { color: currentStroke.color, isEraser: currentStroke.isEraser, eraserMode: currentStroke.eraserMode, size: currentStroke.size, x: coords.x, y: coords.y });
+        // Broadcast exact page to network
+        socket.emit('stream-point', { 
+            pageIndex: pageIndex, color: currentStroke.color, isEraser: currentStroke.isEraser, 
+            eraserMode: currentStroke.eraserMode, size: currentStroke.size, 
+            x: coords.x, y: coords.y 
+        });
         lastX = coords.x; lastY = coords.y;
     });
 
@@ -448,6 +469,7 @@ function attachPointerEvents(canvas, pageIndex) {
     canvas.addEventListener('pointerout', handlePointerUp);
 }
 
+// --- UI EVENT LISTENERS ---
 if(brushSizeSlider) brushSizeSlider.addEventListener('input', (e) => { if(brushSizeVal) brushSizeVal.innerText = e.target.value; });
 
 if(zoomSlider) {
@@ -476,6 +498,7 @@ if(toggleBtn) {
     });
 }
 
+// Ensure iPad clearing targets the activePageIndex strictly
 if(clearBtn) {
     clearBtn.addEventListener('click', () => { 
         if (confirm(`Clear all ink on Page ${activePageIndex + 1}?`)) { 
@@ -484,7 +507,8 @@ if(clearBtn) {
             if(textDiv) textDiv.innerHTML = "";
             notebookPages[activePageIndex].text = "";
             selectedItemIndex = -1; selectedItemPage = -1;
-            requestRedraw(activePageIndex); pushPageUpdate(activePageIndex); 
+            requestRedraw(activePageIndex); 
+            pushPageUpdate(activePageIndex); 
         } 
     });
 }
@@ -513,6 +537,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('paste', async (e) => {
+    // Only iPad Mode can paste images
     if (!isIpadMode) return;
     if (document.activeElement && document.activeElement.classList.contains('page-text-layer')) return;
 
@@ -555,7 +580,8 @@ if (isElectron) {
             const pName = `📁 ${currentNotebookPath.split(/[\\/]/).pop()}`;
             if(projectNameDisplay) projectNameDisplay.innerText = pName;
             
-            notebookPages = [ { strokes: [], text: "" } ]; 
+            notebookPages = []; 
+            activePageIndex = 0;
             initVirtualScroll(1);
             syncSettingsToDisk(); syncPageToDisk(0);
             
@@ -613,7 +639,6 @@ if (exportBtn) {
 
         let lastContentIndex = 0;
         for (let i = 0; i < totalNotebookPages; i++) {
-            // Lazy load pages during export if they aren't in memory
             if (!notebookPages[i]) notebookPages[i] = await ipcRenderer.invoke('fs:loadPage', currentNotebookPath, i);
             const pageData = notebookPages[i];
             
@@ -702,24 +727,29 @@ socket.on('load-full-state', (state) => {
     }
 });
 
-// The iPad requested a page and the server delivered it!
 socket.on('deliver-page', (data) => {
     if (isElectron) return;
     notebookPages[data.pageIndex] = data.data;
     
-    // Find the skeleton and inject the UI now that we have data
     const containerDiv = document.querySelector(`.a4-page-container[data-page-index="${data.pageIndex}"]`);
     if (containerDiv && containerDiv.classList.contains('mounted')) {
         buildPageUI(data.pageIndex, containerDiv);
     }
 });
 
-let remoteX = 0, remoteY = 0;
-socket.on('remote-start-stream', (data) => { remoteX = data.x; remoteY = data.y; });
+// MULTI-PAGE DESYNC FIX (Tracking pen per-page)
+let remoteStreams = {}; 
+
+socket.on('remote-start-stream', (data) => { 
+    if (!remoteStreams[data.pageIndex]) remoteStreams[data.pageIndex] = {};
+    remoteStreams[data.pageIndex].x = data.x; 
+    remoteStreams[data.pageIndex].y = data.y; 
+});
 
 socket.on('remote-stream-point', (data) => {
-    const targetCanvas = document.querySelector(`.a4-page-container[data-page-index="${activePageIndex}"] .page-ink-layer`);
-    if (!targetCanvas) return;
+    const targetCanvas = document.querySelector(`.a4-page-container[data-page-index="${data.pageIndex}"] .page-ink-layer`);
+    
+    if (!targetCanvas || !remoteStreams[data.pageIndex]) return;
     const ctx = targetCanvas.getContext('2d');
     
     if (data.isEraser && data.eraserMode === 'delete') ctx.globalCompositeOperation = 'destination-out'; 
@@ -729,12 +759,14 @@ socket.on('remote-stream-point', (data) => {
     ctx.lineCap = 'round'; 
     ctx.lineJoin = 'round';
     ctx.beginPath(); 
-    ctx.moveTo(remoteX, remoteY); 
+    
+    ctx.moveTo(remoteStreams[data.pageIndex].x, remoteStreams[data.pageIndex].y); 
     ctx.lineTo(data.x, data.y); 
     ctx.stroke();
     ctx.globalCompositeOperation = 'source-over'; 
     
-    remoteX = data.x; remoteY = data.y;
+    remoteStreams[data.pageIndex].x = data.x; 
+    remoteStreams[data.pageIndex].y = data.y;
 });
 
 socket.on('update-active-page', (data) => {
