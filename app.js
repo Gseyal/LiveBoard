@@ -1,5 +1,10 @@
-const isElectron = (typeof window !== 'undefined' && window.require);
-const ipcRenderer = isElectron ? window.require('electron').ipcRenderer : null;
+// --- FOOLPROOF HOST DETECTION ---
+const isElectron = (typeof window !== 'undefined' && (
+    window.require || 
+    (window.process && window.process.versions && window.process.versions.electron) ||
+    navigator.userAgent.toLowerCase().includes('electron')
+));
+const ipcRenderer = isElectron ? (window.require ? window.require('electron').ipcRenderer : window.electron?.ipcRenderer) : null;
 const jsPDF = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : null;
 
 const serverIP = window.location.hostname || 'localhost';
@@ -9,7 +14,6 @@ const socket = io(`http://${serverIP}:3000`);
 const scrollWrapper = document.getElementById('scroll-wrapper');
 const pageStack = document.getElementById('page-stack'); 
 const container = document.getElementById('notebook-container');
-const toggleBtn = document.getElementById('mode-toggle');
 const clearBtn = document.getElementById('clear-btn');
 const colorPicker = document.getElementById('pen-color');
 const bgSelect = document.getElementById('bg-color');
@@ -24,18 +28,19 @@ const brushSizeVal = document.getElementById('brush-size-val');
 const projectNameDisplay = document.getElementById('current-notebook-name');
 const zoomSlider = document.getElementById('zoom-slider');
 const zoomDisplay = document.getElementById('zoom-display');
+const statusPageNum = document.getElementById('status-page-num');
 
 // App State
-let currentTool = 'pen'; 
+let currentTool = 'pen'; // Start in 'iPad Mode' (drawing locked)
 let currentNotebookPath = null;
 let currentZoom = 1.0;
 let eraserMode = 'delete'; 
-let isIpadMode = !isElectron; // Auto-detects browser
 let totalNotebookPages = 0;
 
 let notebookPages = []; 
 let activePageIndex = 0; 
 
+// High-Res Canvas Limits
 const CANVAS_W = 2246;  
 const CANVAS_H = 1588;
 
@@ -54,13 +59,18 @@ let selectedItemIndex = -1; let selectedItemPage = -1;
 let isTransforming = false; let transformMode = null; 
 let dragOffsetX = 0, dragOffsetY = 0;
 
-// --- UTILITIES ---
+// --- MATH & UTILITIES ---
 function generateStrokeId() { return `stroke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`; }
 
 function updateCanvasInteractivity() {
     if (!container) return;
-    if (!isIpadMode && (currentTool === 'pen' || currentTool === 'eraser')) container.classList.add('text-mode-active');
-    else container.classList.remove('text-mode-active');
+    // If NO tools are selected, we are in Laptop Mode (Scroll/Type freely)
+    if (currentTool === 'none') {
+        container.classList.remove('canvas-active');
+    } else {
+        // If ANY draw tool is selected, we are in iPad Mode (Locked Canvas)
+        container.classList.add('canvas-active');
+    }
 }
 
 function perpendicularDistance(point, lineStart, lineEnd) {
@@ -137,7 +147,7 @@ function pushPageUpdate(pageIndex) {
     syncPageToDisk(pageIndex);
 }
 
-// --- DOM VIRTUALIZATION ENGINE ---
+// --- DOM VIRTUALIZATION & INFINITE SCROLL ---
 const pageObserver = new IntersectionObserver(async (entries) => {
     for (const entry of entries) {
         const pageIndex = parseInt(entry.target.dataset.pageIndex);
@@ -198,7 +208,7 @@ function buildPageUI(pageIndex, containerDiv) {
     let typingTimer;
     textDiv.addEventListener('input', (e) => {
         clearTimeout(typingTimer);
-        notebookPages[pageIndex].text = e.target.innerText; // FIX: Use innerText for clean plain text
+        notebookPages[pageIndex].text = e.target.innerText; // The plain text HTML fix
         typingTimer = setTimeout(() => pushPageUpdate(pageIndex), 500); 
     });
 
@@ -229,6 +239,7 @@ if (scrollWrapper) {
             if (visibleHeight > maxVisibleArea) {
                 maxVisibleArea = visibleHeight;
                 activePageIndex = parseInt(container.dataset.pageIndex);
+                if (statusPageNum) statusPageNum.innerText = (activePageIndex + 1);
             }
         });
 
@@ -317,24 +328,29 @@ function redrawPageCanvas(pageIndex) {
             ctx.globalCompositeOperation = 'source-over'; 
         }
         
-        ctx.strokeStyle = '#2196f3'; ctx.lineWidth = 4; ctx.setLineDash([10, 10]); ctx.strokeRect(img.x, img.y, img.w, img.h); ctx.setLineDash([]); 
+        ctx.strokeStyle = '#2b579a'; ctx.lineWidth = 4; ctx.setLineDash([10, 10]); ctx.strokeRect(img.x, img.y, img.w, img.h); ctx.setLineDash([]); 
         ctx.fillStyle = 'white'; const hSize = 24; 
         const drawHandle = (x, y) => { ctx.fillRect(x - hSize/2, y - hSize/2, hSize, hSize); ctx.strokeRect(x - hSize/2, y - hSize/2, hSize, hSize); };
         drawHandle(img.x, img.y); drawHandle(img.x + img.w, img.y); drawHandle(img.x, img.y + img.h); drawHandle(img.x + img.w, img.y + img.h); 
     }
 }
 
-// --- POINTER EVENTS ---
+// --- POINTER EVENTS (WITH SMART PALM REJECTION) ---
 let isDrawing = false, lastX = 0, lastY = 0, currentStroke = {};
 
 function attachPointerEvents(canvas, pageIndex) {
-    canvas.addEventListener('touchstart', (e) => { if (isIpadMode) e.preventDefault(); }, { passive: false });
-    document.addEventListener('contextmenu', (e) => { if (isIpadMode) e.preventDefault(); });
+    // 1. SMART SCROLL LOCK: Block scrolling if ANY Draw tool is active
+    canvas.addEventListener('touchstart', (e) => { 
+        if (currentTool !== 'none') e.preventDefault(); 
+    }, { passive: false });
+    
+    document.addEventListener('contextmenu', (e) => { 
+        if (currentTool !== 'none') e.preventDefault(); 
+    });
 
     canvas.addEventListener('pointerdown', (e) => {
-        // --- TOUCH LOCK RESTORED ---
-        // Blocks fingers/palms unless you are selecting or placing an image!
-        if (isIpadMode && e.pointerType === 'touch' && currentTool !== 'select' && currentTool !== 'image-placer') return;
+        // 2. PALM REJECTION: Ignore fingers entirely if a Draw tool is active
+        if (currentTool !== 'none' && e.pointerType === 'touch') return;
         
         activePageIndex = pageIndex; 
         const coords = getCoords(e, canvas);
@@ -343,7 +359,7 @@ function attachPointerEvents(canvas, pageIndex) {
             const newImg = { id: generateStrokeId(), type: 'image', src: imgPreview.src || imgPreview.dataset.dataUrl, x: coords.x - imgPreview.width / 2, y: coords.y - imgPreview.height / 2, w: imgPreview.width, h: imgPreview.height };
             notebookPages[pageIndex].strokes.push(newImg); 
             imgPreview.style.display = 'none'; 
-            if (penBtn) penBtn.click(); 
+            if (penBtn) setTool('pen', penBtn); 
             requestRedraw(pageIndex); 
             pushPageUpdate(pageIndex); 
             return; 
@@ -370,7 +386,7 @@ function attachPointerEvents(canvas, pageIndex) {
         }
         
         isDrawing = true; lastX = coords.x; lastY = coords.y; 
-        const aColor = colorPicker ? colorPicker.value : '#000000'; 
+        const aColor = colorPicker ? colorPicker.value : '#2b579a'; 
         const isEraser = (currentTool === 'eraser'); 
         const aSize = brushSizeSlider ? parseInt(brushSizeSlider.value, 10) : 3;
         currentStroke = { id: generateStrokeId(), type: 'stroke', color: eraserMode === 'white' && isEraser ? '#ffffff' : aColor, isEraser: isEraser, eraserMode: isEraser ? eraserMode : null, size: aSize, path: [{ x: lastX, y: lastY }] };
@@ -379,8 +395,8 @@ function attachPointerEvents(canvas, pageIndex) {
     });
 
     canvas.addEventListener('pointermove', (e) => {
-        // --- TOUCH LOCK RESTORED ---
-        if (isIpadMode && e.pointerType === 'touch' && currentTool !== 'select' && currentTool !== 'image-placer') return;
+        // SMART PALM REJECTION
+        if (currentTool !== 'none' && e.pointerType === 'touch') return;
         
         const coords = getCoords(e, canvas);
 
@@ -427,8 +443,8 @@ function attachPointerEvents(canvas, pageIndex) {
             requestRedraw(pageIndex); pushPageUpdate(pageIndex); return; 
         }
         
-        // --- TOUCH LOCK RESTORED ---
-        if (isIpadMode && e.pointerType === 'touch' && currentTool !== 'select' && currentTool !== 'image-placer') return;
+        // SMART PALM REJECTION
+        if (currentTool !== 'none' && e.pointerType === 'touch') return;
         
         if (!isDrawing) return;
         isDrawing = false;
@@ -462,7 +478,34 @@ function attachPointerEvents(canvas, pageIndex) {
     canvas.addEventListener('pointerup', handlePointerUp); 
     canvas.addEventListener('pointerout', handlePointerUp);
 }
-// --- UI EVENT LISTENERS ---
+
+// --- UI EVENT LISTENERS & SMART TOOL TOGGLING ---
+function setTool(toolName, btnElement) {
+    if (currentTool === toolName) {
+        // TURN OFF: Drop into Laptop Mode (Scroll/Type)
+        currentTool = 'none';
+        btnElement.classList.remove('active');
+        if (deleteSelectedBtn) deleteSelectedBtn.classList.add('disabled');
+    } else {
+        // TURN ON: Activate iPad Mode (Draw/Select)
+        currentTool = toolName;
+        if (selectBtn) selectBtn.classList.remove('active');
+        if (penBtn) penBtn.classList.remove('active');
+        if (eraserBtn) eraserBtn.classList.remove('active');
+        btnElement.classList.add('active');
+        
+        if (toolName === 'select' && deleteSelectedBtn) deleteSelectedBtn.classList.remove('disabled');
+        else if (deleteSelectedBtn) deleteSelectedBtn.classList.add('disabled');
+    }
+    imgPreview.style.display = 'none';
+    requestRedraw(activePageIndex);
+    updateCanvasInteractivity();
+}
+
+if(selectBtn) selectBtn.addEventListener('click', () => setTool('select', selectBtn));
+if(penBtn) penBtn.addEventListener('click', () => setTool('pen', penBtn));
+if(eraserBtn) eraserBtn.addEventListener('click', () => setTool('eraser', eraserBtn));
+
 if(brushSizeSlider) brushSizeSlider.addEventListener('input', (e) => { if(brushSizeVal) brushSizeVal.innerText = e.target.value; });
 
 if(zoomSlider) {
@@ -481,15 +524,6 @@ function applyTheme(theme) {
     }
 }
 if(bgSelect) bgSelect.addEventListener('change', (e) => applyTheme(e.target.value));
-
-if(toggleBtn) {
-    toggleBtn.addEventListener('click', () => {
-        isIpadMode = !isIpadMode;
-        if (isIpadMode) { container.classList.add('ipad-mode'); toggleBtn.innerText = "✏️ iPad Mode"; toggleBtn.style.backgroundColor = "#e3f2fd"; toggleBtn.style.color = "#0d47a1"; } 
-        else { container.classList.remove('ipad-mode'); toggleBtn.innerText = "💻 Laptop Mode"; toggleBtn.style.backgroundColor = "white"; toggleBtn.style.color = "black"; }
-        updateCanvasInteractivity(); 
-    });
-}
 
 if(clearBtn) {
     clearBtn.addEventListener('click', () => { 
@@ -514,11 +548,13 @@ function deleteSelectedItem() {
 }
 if(deleteSelectedBtn) deleteSelectedBtn.addEventListener('click', deleteSelectedItem);
 
-if(selectBtn) selectBtn.addEventListener('click', () => { currentTool = 'select'; selectBtn.classList.add('active'); if(penBtn) penBtn.classList.remove('active'); if(eraserBtn) eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; if(eraserModeBtn) eraserModeBtn.style.display = 'none'; if(deleteSelectedBtn) deleteSelectedBtn.style.display = 'inline-block'; updateCanvasInteractivity(); });
-if(penBtn) penBtn.addEventListener('click', () => { currentTool = 'pen'; selectedItemIndex = -1; penBtn.classList.add('active'); if(selectBtn) selectBtn.classList.remove('active'); if(eraserBtn) eraserBtn.classList.remove('active'); imgPreview.style.display = 'none'; if(eraserModeBtn) eraserModeBtn.style.display = 'none'; if(deleteSelectedBtn) deleteSelectedBtn.style.display = 'none'; requestRedraw(activePageIndex); updateCanvasInteractivity(); });
-if(eraserBtn) eraserBtn.addEventListener('click', () => { currentTool = 'eraser'; selectedItemIndex = -1; eraserBtn.classList.add('active'); if(penBtn) penBtn.classList.remove('active'); if(selectBtn) selectBtn.classList.remove('active'); imgPreview.style.display = 'none'; if(eraserModeBtn) eraserModeBtn.style.display = 'inline-block'; if(deleteSelectedBtn) deleteSelectedBtn.style.display = 'none'; requestRedraw(activePageIndex); updateCanvasInteractivity(); });
-if(eraserModeBtn) eraserModeBtn.addEventListener('click', () => { eraserMode = eraserMode === 'delete' ? 'white' : 'delete'; eraserModeBtn.innerText = eraserMode === 'delete' ? 'Delete' : 'White'; eraserModeBtn.style.backgroundColor = eraserMode === 'delete' ? '#ffcdd2' : '#fff9c4'; });
-if(colorPicker && penBtn) colorPicker.addEventListener('input', () => penBtn.click());
+if(eraserModeBtn) eraserModeBtn.addEventListener('click', () => { 
+    eraserMode = eraserMode === 'delete' ? 'white' : 'delete'; 
+    eraserModeBtn.innerText = eraserMode === 'delete' ? 'Stroke' : 'White'; 
+});
+if(colorPicker && penBtn) colorPicker.addEventListener('input', () => {
+    if(currentTool !== 'pen') setTool('pen', penBtn);
+});
 
 document.addEventListener('keydown', (e) => {
     if ((e.key === 'Delete' || e.key === 'Backspace') && currentTool === 'select' && selectedItemIndex > -1) {
@@ -529,7 +565,6 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('paste', async (e) => {
-    if (!isIpadMode) return;
     if (document.activeElement && document.activeElement.classList.contains('page-text-layer')) return;
 
     const items = (e.clipboardData || e.originalEvent.clipboardData).items;
@@ -563,12 +598,32 @@ window.addEventListener('paste', async (e) => {
     }
 });
 
+// --- RIBBON TAB SWITCHING LOGIC ---
+const ribbonTabs = document.querySelectorAll('.tab:not(.file-tab)');
+const ribbonToolbars = document.querySelectorAll('.ribbon-toolbar');
+
+ribbonTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+        ribbonTabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        ribbonToolbars.forEach(tb => tb.style.display = 'none');
+
+        const targetId = tab.getAttribute('data-target');
+        if (targetId) {
+            const targetToolbar = document.getElementById(targetId);
+            if (targetToolbar) targetToolbar.style.display = 'flex';
+        }
+    });
+});
+
+
+
 // --- ELECTRON IPC LISTENERS ---
 if (isElectron) {
     ipcRenderer.on('menu-action', (event, payload) => {
         if (payload.action === 'new') {
             currentNotebookPath = payload.path;
-            if(projectNameDisplay) projectNameDisplay.innerText = `📁 ${payload.projectName}`;
+            if(projectNameDisplay) projectNameDisplay.innerText = `${payload.projectName}.scribe`;
             
             notebookPages = []; 
             activePageIndex = 0;
@@ -581,7 +636,7 @@ if (isElectron) {
         else if (payload.action === 'open') {
             const data = JSON.parse(payload.data);
             currentNotebookPath = payload.folderPath;
-            if(projectNameDisplay) projectNameDisplay.innerText = `📁 ${payload.projectName}`;
+            if(projectNameDisplay) projectNameDisplay.innerText = `${payload.projectName}.scribe`;
             
             notebookPages = []; 
             notebookPages[0] = data.firstPage || { strokes: [], text: "" };
@@ -624,7 +679,8 @@ if (exportBtn) {
         if (!currentNotebookPath) return alert("Open a Notebook Folder first!");
         if (!jsPDF) return alert("PDF Engine failed to load.");
         
-        exportBtn.innerText = "⏳ Exporting..."; 
+        exportBtn.innerHTML = "<i data-feather='loader'></i> Exporting..."; 
+        if (window.feather) feather.replace();
 
         let lastContentIndex = 0;
         for (let i = 0; i < totalNotebookPages; i++) {
@@ -675,7 +731,8 @@ if (exportBtn) {
 
         const arrayBuffer = pdf.output('arraybuffer');
         await ipcRenderer.invoke('fs:savePDF', currentNotebookPath, arrayBuffer);
-        exportBtn.innerText = "🖨️ Export PDF"; 
+        exportBtn.innerHTML = "<i data-feather='printer'></i> Export PDF"; 
+        if (window.feather) feather.replace();
         alert(`PDF Exported Successfully! (${pagesToExport} pages)`);
     });
 }
@@ -689,8 +746,8 @@ const qrContainer = document.getElementById('qrcode');
 
 const refreshNetBtn = document.createElement('button');
 refreshNetBtn.innerHTML = "🔄 Refresh Server Connection";
-refreshNetBtn.className = "btn";
-refreshNetBtn.style.cssText = "margin-top: 15px; width: 100%; background-color: #ffe0b2; font-weight: bold; padding: 10px;";
+refreshNetBtn.className = "standard-btn";
+refreshNetBtn.style.cssText = "margin-top: 15px; width: 100%; background-color: #deecf9; font-weight: bold; padding: 10px; color: #2b579a; border-color: #2b579a;";
 if (qrContainer && qrContainer.parentElement) qrContainer.parentElement.appendChild(refreshNetBtn);
 
 refreshNetBtn.addEventListener('click', async () => {
@@ -723,13 +780,13 @@ socket.on('load-full-state', (state) => {
     if (state && state.isOpen) {
         notebookPages = []; 
         applyTheme(state.settings ? state.settings.theme : 'white');
-        if (state.settings && state.settings.projectName && projectNameDisplay) projectNameDisplay.innerText = state.settings.projectName;
+        if (state.settings && state.settings.projectName && projectNameDisplay) projectNameDisplay.innerText = `${state.settings.projectName}.scribe`;
         
         initVirtualScroll(state.totalPages);
     } else {
-        if (pageStack) {
+        if (pageStack && !isElectron) {
             pageStack.innerHTML = `<div style="margin: auto; margin-top: 20vh; text-align: center; color: #888;">
-                <h2>Waiting for ScribeSync Host...</h2>
+                <h2>Waiting for Scribe Host...</h2>
                 <p>Please open a notebook on your computer to begin syncing.</p>
             </div>`;
         }
@@ -799,6 +856,73 @@ socket.on('delete-strokes', (data) => {
     if(notebookPages[data.pageIndex]) {
         notebookPages[data.pageIndex].strokes = notebookPages[data.pageIndex].strokes.filter(s => !data.strokeIds.includes(s.id));
         requestRedraw(data.pageIndex);
+    }
+});
+
+// --- DESKTOP WELCOME SCREEN ---
+function showWelcomeScreen() {
+    if (!pageStack) return;
+    
+    pageStack.innerHTML = `
+        <div class="welcome-card">
+            <div class="welcome-header">
+                <i data-feather="book-open" class="welcome-logo"></i>
+                <h2>Welcome to Scribe</h2>
+                <p>Enterprise Document & Streaming Canvas</p>
+            </div>
+            <div class="welcome-body">
+                <p class="welcome-instruction">Get started by creating a new document container or opening an existing project from your local workstation directory.</p>
+                <div class="welcome-actions">
+                    <button id="welcome-new-btn" class="welcome-action-btn primary">
+                        <i data-feather="file-plus"></i>
+                        <span>New Notebook Container (Ctrl + N)</span>
+                    </button>
+                    <button id="welcome-open-btn" class="welcome-action-btn">
+                        <i data-feather="folder-open"></i>
+                        <span>Open Existing Project (Ctrl + O)</span>
+                    </button>
+                </div>
+            </div>
+            <div class="welcome-footer">
+                <span>System Status: Operational</span>
+                <span>v2.4.0-fluent</span>
+            </div>
+        </div>
+    `;
+    
+    if (window.feather) feather.replace({ width: 20, height: 20 });
+
+    // 1. Grab the buttons
+    const newBtn = document.getElementById('welcome-new-btn');
+    const openBtn = document.getElementById('welcome-open-btn');
+
+    // 2. Hard-wire the backend connection directly into the click
+    if (newBtn) {
+        newBtn.addEventListener('click', () => {
+            try {
+                // This forces the app to grab the Electron API at the exact moment of the click
+                const ipc = window.require('electron').ipcRenderer;
+                ipc.send('trigger-menu-item', 'new-file');
+            } catch (err) {
+                alert("Frontend Error: Electron API blocked. Please use Ctrl + N.");
+            }
+        });
+    }
+
+    if (openBtn) {
+        openBtn.addEventListener('click', () => {
+            try {
+                const ipc = window.require('electron').ipcRenderer;
+                ipc.send('trigger-menu-item', 'open-file');
+            } catch (err) {
+                alert("Frontend Error: Electron API blocked. Please use Ctrl + O.");
+            }
+        });
+    }
+}
+document.addEventListener('DOMContentLoaded', () => {
+    if (isElectron && !currentNotebookPath) {
+        showWelcomeScreen();
     }
 });
 

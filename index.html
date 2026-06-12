@@ -3,73 +3,136 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ScribeSync</title>
+    <title>Scribe</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://unpkg.com/feather-icons"></script>
 </head>
 <body>
 
-    <div id="toolbar">
-        <div class="tool-group">
-            <button id="export-btn" class="btn">🖨️ Export PDF</button>
-            <span id="current-notebook-name" style="margin-left:10px; font-weight:bold; color:#2196f3; font-size: 13px;">No Notebook Open</span>
+    <div class="title-bar">
+        <div class="title-left">
+            <i data-feather="book-open" class="app-icon"></i>
+            <span>ScribeSync</span>
         </div>
-
-        <div class="tool-group" style="margin-left: auto; padding-left: 15px; border-left: 2px solid #ccc;">
-            <button id="select-btn" class="btn tool-btn" style="padding: 8px;">🖱️ Select</button>
-            <button id="delete-selected-btn" class="btn" style="background:#ffebee; color:#c62828; display:none;">🗑️ Delete Item</button>
-            <button id="pen-btn" class="btn tool-btn active" style="padding: 8px;">🖊️ Pen</button>
-            <button id="eraser-btn" class="btn tool-btn" style="padding: 8px;">🧽 Eraser</button>
-            <button id="eraser-mode-btn" class="btn" style="display: none; background: #ffcdd2;">Delete</button>
+        <div class="title-center">
+            <span id="current-notebook-name">Document1.scribe</span> - Saved locally
         </div>
-
-        <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
-            <label for="pen-color">Color:</label>
-            <input type="color" id="pen-color" value="#000000" style="width: 30px; height: 30px; border:none; cursor:pointer; padding:0;">
-            
-            <label for="brush-size" style="margin-left: 10px;">Size: <span id="brush-size-val">3</span></label>
-            <input type="range" id="brush-size" min="1" max="50" value="3" style="width: 80px;">
-        </div>
-
-        <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
-            <select id="bg-color">
-                <option value="white">Light Theme</option>
-                <option value="black">Dark Theme</option>
-            </select>
-            <label style="margin-left: 10px;">Zoom: <span id="zoom-display">100%</span></label>
-            <input type="range" id="zoom-slider" min="50" max="200" value="100" style="width: 80px;">
-        </div>
-
-        <div class="tool-group" style="padding-left: 15px; border-left: 2px solid #ccc;">
-            <button id="mode-toggle" class="btn">💻 Laptop Mode</button>
-            <button id="share-btn" class="btn" style="background:#e8f5e9; border-color:#81c784; color:#2e7d32;">📱 iPad Sync</button>
-            <button id="clear-btn" class="btn" style="background:#fff9c4; color:#f57f17;">🗑️ Clear Page</button>
-        </div>
+        <div class="title-right">
+            </div>
     </div>
 
-    <div id="notebook-container">
-        <div id="scroll-wrapper">
-            <div id="page-stack">
-                <div id="empty-state" style="margin: auto; margin-top: 20vh; text-align: center; color: #888;">
-                    <h2>Welcome to ScribeSync</h2>
-                    <p>Go to <strong>File > New Notebook Folder</strong> or <strong>Open Notebook Folder</strong> to start.</p>
+    <header class="ribbon-header">
+        <div class="ribbon-tabs">
+            <div class="tab" data-target="toolbar-home">Home</div>
+            <div class="tab active" data-target="toolbar-draw">Draw</div>
+            <div class="tab" data-target="toolbar-view">View</div>
+        </div>
+
+        <div class="ribbon-toolbar" id="toolbar-draw">
+            <div class="tool-group">
+                <div class="button-row">
+                    <button id="select-btn" class="ribbon-btn"><i data-feather="mouse-pointer"></i> Select</button>
+                    <button id="pen-btn" class="ribbon-btn active"><i data-feather="edit-2"></i> Pen</button>
+                    <button id="eraser-btn" class="ribbon-btn"><i data-feather="delete"></i> Eraser</button>
                 </div>
+                <span class="group-label">Tools</span>
+            </div>
+            <div class="divider"></div>
+
+            <div class="tool-group">
+                <div class="button-row align-center">
+                    <div class="color-picker-wrapper" title="Ink Color">
+                        <i data-feather="droplet" class="color-icon"></i>
+                        <input type="color" id="pen-color" value="#2b579a" class="color-swatch">
+                    </div>
+                    <div class="control-stack">
+                        <div class="slider-row">
+                            <i data-feather="maximize-2" class="tiny-icon"></i>
+                            <input type="range" id="brush-size" min="1" max="20" value="3">
+                            <span class="val-display" id="brush-size-val">3</span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label>Eraser Mode:</label>
+                            <button id="eraser-mode-btn" class="combo-box">Stroke</button>
+                        </div>
+                    </div>
+                </div>
+                <span class="group-label">Thickness & Color</span>
+            </div>
+            <div class="divider"></div>
+
+            <div class="tool-group">
+                <div class="button-row">
+                    <button id="delete-selected-btn" class="ribbon-btn disabled"><i data-feather="scissors"></i> Cut</button>
+                    <button id="clear-btn" class="ribbon-btn danger"><i data-feather="trash-2"></i> Clear Page</button>
+                </div>
+                <span class="group-label">Canvas</span>
             </div>
         </div>
-    </div>
 
-    <div id="qr-modal" class="modal hidden">
-        <div class="modal-content">
-            <h3>Connect your iPad</h3>
-            <p>Scan this code with your iPad camera:</p>
-            <div id="qrcode"></div>
-            <input type="text" id="local-url-input" readonly style="width:100%; padding:8px; margin-top:10px; text-align:center; border:1px solid #ccc; border-radius:4px;">
-            <button id="close-modal-btn" class="btn" style="margin-top: 15px; width: 100%;">Close</button>
+        <div class="ribbon-toolbar" id="toolbar-home" style="display: none;">
+            <div class="tool-group">
+                <div class="button-row">
+                    <button id="share-btn" class="ribbon-btn highlight"><i data-feather="cast"></i> Broadcast</button>
+                    <button id="export-btn" class="ribbon-btn"><i data-feather="printer"></i> Export PDF</button>
+                </div>
+                <span class="group-label">Share & Export</span>
+            </div>
+        </div>
+
+        <div class="ribbon-toolbar" id="toolbar-view" style="display: none;">
+            <div class="tool-group">
+                <div class="button-row align-center">
+                    <div class="control-stack combo-stack">
+                        <label>Page Theme</label>
+                        <select id="bg-color" class="combo-box wide">
+                            <option value="white">Blank White</option>
+                            <option value="black">Dark Mode</option>
+                        </select>
+                    </div>
+                </div>
+                <span class="group-label">Appearance</span>
+            </div>
+        </div>
+    </header>
+
+    <div id="scroll-wrapper">
+        <div id="notebook-container" class="canvas-active">
+            <div id="page-stack"></div>
         </div>
     </div>
 
+    <footer class="status-bar">
+        <div class="status-left">
+            <span><i data-feather="file-text"></i> Page <span id="status-page-num">1</span></span>
+            <span class="status-divider">|</span>
+            <span id="sync-status"><i data-feather="check-circle"></i> Ready</span>
+        </div>
+        <div class="status-right">
+            <i data-feather="zoom-out" class="zoom-icon"></i>
+            <input type="range" id="zoom-slider" min="50" max="200" value="100">
+            <i data-feather="zoom-in" class="zoom-icon"></i>
+            <span id="zoom-display">100%</span>
+        </div>
+    </footer>
+
+    <div id="qr-modal" class="hidden modal-overlay">
+        <div class="modal-box">
+            <h3><i data-feather="tablet"></i> Connect iPad</h3>
+            <p>Scan this code to cast your screen.</p>
+            <div id="qrcode"></div>
+            <input type="text" id="local-url-input" readonly>
+            <button id="close-modal-btn" class="standard-btn">Close</button>
+        </div>
+    </div>
+
+    <script>
+        // Initialize the professional icons instantly
+        feather.replace({ width: 18, height: 18, 'stroke-width': 1.5 });
+    </script>
     <script src="app.js"></script>
 </body>
 </html>

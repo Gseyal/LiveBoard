@@ -2,6 +2,7 @@
   "name": "scribesync",
   "version": "1.0.1",
   "description": "Offline laptop notebook with iPad network syncing",
+  "author": "Gautam Seyal",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -14,6 +15,14 @@
       "output": "release",
       "buildResources": "icon"
     },
+    "fileAssociations": [
+      {
+        "ext": "scribe",
+        "name": "ScribeSync",
+        "description": "ScribeSync Document",
+        "icon": "icon/file_icon.ico"
+      }
+    ],
     "win": {
       "target": "nsis",
       "icon": "icon/scribe_sync_icon_protected.ico"
