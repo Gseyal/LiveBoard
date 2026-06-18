@@ -1,6 +1,6 @@
 {
   "name": "scribesync",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "description": "Offline laptop notebook with iPad network syncing",
   "author": "Gautam Seyal",
   "main": "main.js",

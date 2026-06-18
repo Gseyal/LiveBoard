@@ -12,9 +12,40 @@
     --zoom: 1;
 }
 
+<<<<<<< HEAD
 * { box-sizing: border-box; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
 
 body { margin: 0; padding: 0; background: var(--ms-app-bg); display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: var(--ms-text); user-select: none; }
+=======
+#scroll-wrapper {
+    position: relative; width: 1200px !important; max-width: 1200px !important; min-height: 5000px;
+    margin: 40px auto; background-color: #ffffff; box-shadow: 0 10px 30px rgba(0,0,0,0.15); 
+    background-image: repeating-linear-gradient(to bottom, transparent, transparent 1121px, #d0d0d0 1121px, #d0d0d0 1123px);
+    transform-origin: top center; transition: transform 0.15s ease-out; 
+}
+
+#notebook-container.theme-black { background: #121212; }
+#notebook-container.theme-black #scroll-wrapper { 
+    background-color: #1e1e1e; 
+    background-image: repeating-linear-gradient(to bottom, transparent, transparent 1121px, #333333 1121px, #333333 1123px);
+}
+.theme-black #text-layer { color: #e0e0e0; }
+/* ===============================================
+   A4 MODE FIX (Keeps the Desk full size!)
+   =============================================== */
+/* 1. The Desk must NEVER shrink. It stays full width. */
+#notebook-container.size-a4 { 
+    width: 100%; 
+    height: calc(100vh - 60px); 
+    margin: 0; 
+    background: #e2e5e9; 
+    border: none; 
+    border-radius: 0; 
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.05); 
+    overflow-y: auto; 
+    overflow-x: auto; 
+}
+>>>>>>> parent of 1e294a3 (stable app)
 
 /* --- TITLE BAR --- */
 .title-bar { 

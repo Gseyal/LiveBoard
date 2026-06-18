@@ -1,7 +1,6 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
-const path = require('path');
+const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
 const fs = require('fs');
-const os = require('os');
+const path = require('path');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -18,66 +17,163 @@ let serverPort = 3000;
 let activeNotebookPath = null; // Temp folder where unzipped files live while editing
 let realScribeFilePath = null; // The actual .scribe file on the user's hard drive
 
-// --- NETWORK & SERVER SETUP ---
-function getLocalIP() {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-        for (const net of interfaces[name]) {
-            if (net.family === 'IPv4' && !net.internal) return net.address;
-        }
-    }
-    return '127.0.0.1';
-}
+expressApp.use(express.static(__dirname));
+expressApp.use(express.json({ limit: '50mb' })); // Allow large base64 images
 
-function startServer() {
-    expressApp = express();
-    server = http.createServer(expressApp);
-    io = new Server(server, { cors: { origin: "*" } });
+const projectMap = {};
 
-    // Serve the UI files to the iPad
-    expressApp.use(express.static(__dirname));
+let currentProjectFolder = ''; // Track current project folder basename
+let currentStrokes = [];
+let currentText = "";
+let currentSettings = { theme: 'white', pageSize: 'infinite', canvasHeight: 5000, projectName: '📁 No Project' };
+let notebookState = {
+    pages: [{ strokes: [], text: "" }],
+    currentPageIndex: 0,
+    settings: currentSettings,
+};
 
-    // WebSocket Syncing Engine
-    let currentSessionState = { isOpen: false, totalPages: 0, settings: { theme: 'white' } };
-
-    io.on('connection', (socket) => {
-        // When iPad connects, send current state
-        socket.emit('load-full-state', currentSessionState);
-
-        // Host updates the master state
-        socket.on('host-set-full-state', (state) => {
-            currentSessionState = state;
-            socket.broadcast.emit('load-full-state', state);
+function normalizeNotebookImages(pages) {
+    if (!Array.isArray(pages)) return pages;
+    pages.forEach((page) => {
+        if (!page || !Array.isArray(page.strokes)) return;
+        page.strokes.forEach((stroke) => {
+            if (!stroke || stroke.type !== 'image') return;
+            delete stroke.localPath;
         });
-
-        // Virtualized Pagination Syncing
-        socket.on('request-page', (pageIndex) => socket.broadcast.emit('request-page', pageIndex));
-        socket.on('deliver-page', (data) => socket.broadcast.emit('deliver-page', data));
-        socket.on('update-active-page', (data) => socket.broadcast.emit('update-active-page', data));
-
-        // Real-Time Drawing Relays
-        socket.on('start-stream', (data) => socket.broadcast.emit('start-stream', data));
-        socket.on('stream-point', (data) => socket.broadcast.emit('stream-point', data));
-        socket.on('remote-start-stream', (data) => socket.broadcast.emit('remote-start-stream', data));
-        socket.on('remote-stream-point', (data) => socket.broadcast.emit('remote-stream-point', data));
-
-        // Batch Actions
-        socket.on('add-stroke-batch', (data) => socket.broadcast.emit('add-stroke-batch', data));
-        socket.on('delete-strokes', (data) => socket.broadcast.emit('delete-strokes', data));
     });
-
-    server.listen(serverPort, () => {
-        console.log(`Sync server running at http://${getLocalIP()}:${serverPort}`);
-    });
+    return pages;
 }
 
-// --- FILE SYSTEM UTILITIES ---
-function packageScribeFile() {
-    if (!activeNotebookPath || !realScribeFilePath) return;
+io.on('connection', (socket) => {
+    console.log('[Socket] New client connected. Current project folder:', currentProjectFolder);
+    socket.emit('receive-strokes', currentStrokes);
+    socket.emit('receive-text', currentText);
+    socket.emit('receive-page-settings', currentSettings);
+    socket.emit('load-full-state', notebookState);
+    socket.emit('receive-active-page', notebookState.pages[notebookState.currentPageIndex] || { strokes: [], text: "" });
+    socket.emit('set-project-folder', currentProjectFolder); // Send project folder to browser clients
+
+    socket.on('start-stream', (data) => socket.broadcast.emit('remote-start-stream', data));
+    socket.on('stream-point', (data) => socket.broadcast.emit('remote-stream-point', data));
+
+    socket.on('add-stroke-batch', (batch) => {
+        currentStrokes.push(...batch);
+        if (notebookState.pages[notebookState.currentPageIndex]) {
+            notebookState.pages[notebookState.currentPageIndex].strokes = currentStrokes;
+        }
+        socket.broadcast.emit('receive-stroke-batch', batch);
+    });
+    socket.on('update-strokes', (strokes) => {
+        currentStrokes = strokes;
+        if (notebookState.pages[notebookState.currentPageIndex]) {
+            notebookState.pages[notebookState.currentPageIndex].strokes = strokes;
+        }
+        socket.broadcast.emit('receive-strokes', strokes);
+    });
+    socket.on('update-text', (text) => {
+        currentText = text;
+        if (notebookState.pages[notebookState.currentPageIndex]) {
+            notebookState.pages[notebookState.currentPageIndex].text = text;
+        }
+        socket.broadcast.emit('receive-text', text);
+    });
+    socket.on('update-page-settings', (settings) => {
+        currentSettings = { ...currentSettings, ...settings };
+        notebookState.settings = currentSettings;
+        socket.broadcast.emit('receive-page-settings', currentSettings);
+    });
+    socket.on('load-full-state', (state) => {
+        notebookState = {
+            pages: normalizeNotebookImages(state.pages || [{ strokes: [], text: "" }]),
+            currentPageIndex: state.currentPageIndex || 0,
+            settings: { ...currentSettings, ...(state.settings || {}) },
+        };
+        currentSettings = notebookState.settings;
+        const activePage = notebookState.pages[notebookState.currentPageIndex] || { strokes: [], text: "" };
+        currentStrokes = activePage.strokes || [];
+        currentText = activePage.text || "";
+        socket.broadcast.emit('load-full-state', notebookState);
+        socket.broadcast.emit('receive-active-page', activePage);
+        socket.broadcast.emit('receive-page-settings', currentSettings);
+    });
+    socket.on('update-active-page', (pageData) => {
+        const normalizedPage = { ...pageData, strokes: normalizeNotebookImages(pageData.strokes ? [{ strokes: pageData.strokes, text: pageData.text || "" }] : [{ strokes: [], text: pageData.text || "" }])[0].strokes };
+        notebookState.pages[notebookState.currentPageIndex] = normalizedPage;
+        currentStrokes = normalizedPage.strokes || [];
+        currentText = normalizedPage.text || "";
+        socket.broadcast.emit('receive-active-page', normalizedPage);
+    });
+    socket.on('change-page', (index) => {
+        notebookState.currentPageIndex = index;
+        socket.broadcast.emit('remote-page-changed', index);
+        const activePage = notebookState.pages[index] || { strokes: [], text: "" };
+        currentStrokes = activePage.strokes || [];
+        currentText = activePage.text || "";
+        socket.broadcast.emit('receive-active-page', activePage);
+    });
+    socket.on('add-page', () => {
+        notebookState.pages.push({ strokes: [], text: "" });
+        notebookState.currentPageIndex = notebookState.pages.length - 1;
+        currentStrokes = [];
+        currentText = "";
+        socket.broadcast.emit('remote-page-added', notebookState);
+        socket.broadcast.emit('load-full-state', notebookState);
+    });
+    socket.on('trigger-remote-export', () => {
+        socket.broadcast.emit('trigger-remote-export');
+    });
+});
+
+server.listen(3000, '0.0.0.0', () => {
+    console.log('Internal Sync Server is running on Port 3000');
+});
+
+expressApp.get('/notebook-assets/:project/:file', (req, res) => {
+    const folderPath = projectMap[req.params.project];
+    if (!folderPath) return res.status(404).send('Project not found');
+
+    const filePath = path.join(folderPath, 'assets', req.params.file);
+    if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
+
+    return res.sendFile(filePath);
+});
+
+// POST endpoint for browser clients to upload images
+expressApp.post('/upload-asset', (req, res) => {
+    const { project, fileName, base64Data } = req.body;
+    console.log('[Upload] Received request for project:', project, 'file:', fileName);
+    if (!project || !fileName || !base64Data) {
+        console.error('[Upload] Missing parameters. project:', project, 'fileName:', fileName, 'base64Data:', !!base64Data);
+        return res.status(400).json({ error: 'Missing project, fileName, or base64Data' });
+    }
+
+    const folderPath = projectMap[project];
+    console.log('[Upload] Project folder path:', folderPath, 'Project map keys:', Object.keys(projectMap));
+    if (!folderPath) {
+        console.error('[Upload] Project not found in map');
+        return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const assetsDir = path.join(folderPath, 'assets');
+    if (!fs.existsSync(assetsDir)) {
+        fs.mkdirSync(assetsDir, { recursive: true });
+    }
+
     try {
-        const zip = new AdmZip();
-        zip.addLocalFolder(activeNotebookPath);
-        zip.writeZip(realScribeFilePath);
+        // Remove data:image/...;base64, prefix if present
+        let base64 = base64Data;
+        if (base64.includes(',')) {
+            base64 = base64.split(',')[1];
+        }
+
+        const buffer = Buffer.from(base64, 'base64');
+        const filePath = path.join(assetsDir, fileName);
+        fs.writeFileSync(filePath, buffer);
+        console.log('[Upload] File saved to:', filePath);
+
+        const httpUrl = `http://localhost:3000/notebook-assets/${encodeURIComponent(project)}/${encodeURIComponent(fileName)}`;
+        console.log('[Upload] Returning URL:', httpUrl);
+        res.json({ success: true, url: httpUrl });
     } catch (err) {
         console.error("Failed to package .scribe file:", err);
     }
@@ -156,21 +252,75 @@ function createMenu() {
         {
             label: 'File',
             submenu: [
-                { label: 'New Notebook', accelerator: 'CmdOrCtrl+N', click: createNewNotebook },
-                { label: 'Open Notebook', accelerator: 'CmdOrCtrl+O', click: openExistingNotebook },
+                {
+                    label: 'New Notebook Folder',
+                    accelerator: 'CmdOrCtrl+N',
+                    click: async () => {
+                        const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] });
+                        if (!result.canceled && result.filePaths.length > 0) {
+                            currentStrokes = []; currentText = "";
+                            const folderPath = result.filePaths[0];
+                            const baseName = path.basename(folderPath);
+                            currentProjectFolder = baseName; // Update current project folder
+                            console.log('[Menu] New project opened:', baseName);
+                            projectMap[baseName] = folderPath;
+                            const pName = `📁 ${baseName}`;
+                            currentSettings = { theme: 'white', pageSize: 'infinite', canvasHeight: 5000, projectName: pName };
+                            notebookState = {
+                                pages: [{ strokes: [], text: "" }],
+                                currentPageIndex: 0,
+                                settings: currentSettings,
+                            };
+                            io.sockets.emit('set-project-folder', baseName); // Broadcast to all connected clients
+                            console.log('[Socket] Broadcasting project folder:', baseName);
+                            mainWindow.webContents.send('menu-action', { action: 'new', path: result.filePaths[0] });
+                        }
+                    }
+                },
+                {
+                    label: 'Open Notebook',
+                    accelerator: 'CmdOrCtrl+O',
+                    click: async () => {
+                        const result = await dialog.showOpenDialog(mainWindow, {
+                            properties: ['openFile'], filters: [{ name: 'ScribeSync Notebook', extensions: ['sbn'] }]
+                        });
+                        if (!result.canceled && result.filePaths.length > 0) {
+                            const filePath = result.filePaths[0];
+                            const data = fs.readFileSync(filePath, 'utf-8');
+                            try {
+                                const parsed = JSON.parse(data);
+                                if (parsed.pages) {
+                                    notebookState.pages = parsed.pages;
+                                    notebookState.currentPageIndex = parsed.currentPageIndex || 0;
+                                    currentStrokes = notebookState.pages[notebookState.currentPageIndex]?.strokes || [];
+                                    currentText = notebookState.pages[notebookState.currentPageIndex]?.text || "";
+                                } else {
+                                    currentStrokes = parsed.strokes || [];
+                                    currentText = parsed.text || "";
+                                    notebookState.pages = [{ strokes: currentStrokes, text: currentText }];
+                                    notebookState.currentPageIndex = 0;
+                                }
+                                const folderPath = path.dirname(filePath);
+                                const baseName = path.basename(folderPath);
+                                currentProjectFolder = baseName; // Update current project folder
+                                console.log('[Menu] Notebook opened:', baseName);
+                                projectMap[baseName] = folderPath;
+                                const pName = `📁 ${baseName}`;
+                                if (parsed.settings) currentSettings = { ...currentSettings, ...parsed.settings, projectName: pName };
+                                else currentSettings.projectName = pName;
+                                notebookState.settings = currentSettings;
+                                io.sockets.emit('set-project-folder', baseName); // Broadcast to all connected clients
+                                console.log('[Socket] Broadcasting project folder:', baseName);
+                            } catch (e) { console.error("Error parsing notebook file:", e); }
+                            mainWindow.webContents.send('menu-action', { action: 'open', data: data, folderPath: path.dirname(filePath), fileName: path.basename(filePath) });
+                        }
+                    }
+                },
                 { type: 'separator' },
                 isMac ? { role: 'close' } : { role: 'quit', accelerator: 'CmdOrCtrl+Q' }
             ]
         },
-        {
-            label: 'View',
-            submenu: [
-                { role: 'reload' },
-                { role: 'toggledevtools' },
-                { type: 'separator' },
-                { role: 'togglefullscreen' }
-            ]
-        }
+        { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggledevtools' }] }
     ];
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -226,11 +376,35 @@ ipcMain.on('trigger-menu-item', (event, action) => {
 // Page Saving (Debounced from frontend)
 ipcMain.handle('fs:savePage', async (event, folderPath, pageIndex, pageData) => {
     try {
-        const pagesDir = path.join(folderPath, 'pages');
-        if (!fs.existsSync(pagesDir)) fs.mkdirSync(pagesDir, { recursive: true });
-        
-        fs.writeFileSync(path.join(pagesDir, `page_${pageIndex}.json`), JSON.stringify(pageData));
-        packageScribeFile(); // Bundle the zip immediately
+        const parsed = JSON.parse(data);
+        const imageUrlFor = (stroke) => {
+            if (!stroke || stroke.type !== 'image') return null;
+            // If src is already a non-base64 URL, keep it
+            if (typeof stroke.src === 'string' && !stroke.src.startsWith('data:')) return stroke.src;
+            // If src is base64 but tag exists, rebuild the HTTP URL from tag
+            if (typeof stroke.tag === 'string' && stroke.tag) {
+                return `http://localhost:3000/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(stroke.tag)}`;
+            }
+            // For browser-only clients, keep the base64 src as-is
+            if (typeof stroke.src === 'string' && stroke.src.startsWith('data:')) return stroke.src;
+            return null;
+        };
+
+        if (Array.isArray(parsed.pages)) {
+            parsed.pages.forEach((page) => {
+                if (!page || !Array.isArray(page.strokes)) return;
+                page.strokes.forEach((stroke) => {
+                    if (!stroke || stroke.type !== 'image') return;
+                    const url = imageUrlFor(stroke);
+                    if (url) {
+                        stroke.src = url;
+                        delete stroke.localPath;
+                    }
+                });
+            });
+        }
+
+        fs.writeFileSync(path.join(folderPath, `${folderName}.sbn`), JSON.stringify(parsed, null, 2));
         return true;
     } catch (err) {
         console.error(err);
@@ -247,22 +421,15 @@ ipcMain.handle('fs:saveSettings', async (event, folderPath, settings) => {
     } catch (err) { return false; }
 });
 
-// Image / Asset Saving
-ipcMain.handle('fs:saveAsset', async (event, folderPath, fileName, base64Data) => {
-    try {
-        const assetsDir = path.join(folderPath, 'assets');
-        if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-        
-        const filePath = path.join(assetsDir, fileName);
-        fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
-        
-        packageScribeFile();
-        // Return local protocol path so the HTML image tag can render it
-        return `file://${filePath}`; 
-    } catch (err) {
-        console.error("Asset save error:", err);
-        throw err;
-    }
+ipcMain.handle('fs:saveAsset', (event, folderPath, fileName, base64Data) => {
+    const assetsDir = path.join(folderPath, 'assets');
+    if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+
+    const filePath = path.join(assetsDir, fileName);
+    fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+
+    const folderName = path.basename(folderPath);
+    return `http://localhost:3000/notebook-assets/${encodeURIComponent(folderName)}/${encodeURIComponent(fileName)}`;
 });
 
 // Lazy-Load Pages
