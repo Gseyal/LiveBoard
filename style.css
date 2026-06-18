@@ -1,17 +1,8 @@
-/* --- MICROSOFT FLUENT DESIGN SYSTEM --- */
 :root {
-    --ms-blue: #2b579a; 
-    --ms-blue-hover: #1e3f6f;
-    --ms-ribbon-bg: #f3f2f1;
-    --ms-ribbon-hover: #e1dfdd;
-    --ms-ribbon-active: #c8c6c4;
-    --ms-app-bg: #e1dfdd; 
-    --ms-border: #e1dfdd;
-    --ms-text: #201f1e;
-    --ms-text-muted: #605e5c;
-    --zoom: 1;
+    --zoom: 1; /* This variable controls the zoom dynamically! */
 }
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 * { box-sizing: border-box; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
 
@@ -59,102 +50,79 @@ body { margin: 0; padding: 0; background: var(--ms-app-bg); display: flex; flex-
     height: 35px; 
     flex-shrink: 0; 
     -webkit-app-region: drag; /* Turns the HTML into a physical window handle! */
+=======
+* { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+/* The background is now standard Apple grey */
+body, #notebook-container, #scroll-wrapper { 
+    margin: 0; padding: 0; 
+    background-color: #e5e5ea; 
+    overflow: hidden; 
+>>>>>>> parent of 6b2b33a (verison 1.0.2)
 }
-.title-left { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: 0.5px; }
-.app-icon { width: 14px; height: 14px; -webkit-app-region: no-drag; }
-.title-center { font-weight: 400; opacity: 0.9; }
 
-/* Ensure tabs and buttons are still clickable! */
-.title-btn, .ribbon-tabs { -webkit-app-region: no-drag; }
+#toolbar {
+    height: 60px; width: 100%; background-color: #ffffff; border-bottom: 1px solid #e0e0e0;
+    display: flex; align-items: center; padding: 0 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    position: relative; z-index: 1000;
+    user-select: none; -webkit-user-select: none;
+    overflow-x: auto; white-space: nowrap; flex-wrap: nowrap;
+}
+.tool-group { display: flex; align-items: center; gap: 8px; margin-right: 15px; flex: 0 0 auto; }
+#toolbar::-webkit-scrollbar { height: 8px; }
+#toolbar::-webkit-scrollbar-thumb { background-color: #c1c1c1; border-radius: 6px; }
 
-/* --- TABS --- */
-.ribbon-header { background: var(--ms-ribbon-bg); border-bottom: 1px solid #c8c6c4; display: flex; flex-direction: column; flex-shrink: 0; }
-.ribbon-tabs { display: flex; background: #ffffff; padding-top: 4px; border-bottom: 1px solid var(--ms-border); }
-.tab { padding: 4px 16px; font-size: 13px; cursor: pointer; color: var(--ms-text); position: relative; margin-bottom: -1px; transition: background 0.2s; }
-.tab:hover:not(.active):not(.file-tab) { background: var(--ms-ribbon-bg); }
-.tab.active { background: var(--ms-ribbon-bg); font-weight: 600; border: 1px solid var(--ms-border); border-bottom: 1px solid var(--ms-ribbon-bg); border-radius: 4px 4px 0 0; }
-.file-tab { background: var(--ms-blue); color: white; border-radius: 4px 4px 0 0; font-weight: 600; margin-right: 4px; }
-.file-tab:hover { background: var(--ms-blue-hover); }
+.btn { padding: 6px 12px; border: 1px solid #ccc; background: white; border-radius: 6px; cursor: pointer; font-size: 14px; transition: 0.2s; }
+.btn:hover { background: #f0f0f0; }
+.btn.active { background: #e3f2fd; border-color: #2196f3; color: #0d47a1; font-weight: bold; }
 
-/* --- TOOLBAR --- */
-.ribbon-toolbar { display: flex; padding: 6px 12px 2px 12px; height: 90px; }
-.tool-group { display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 0 12px; }
-.button-row { display: flex; gap: 2px; align-items: flex-start; height: 100%; }
-.button-row.align-center { align-items: center; gap: 16px; }
-.group-label { font-size: 11px; color: var(--ms-text-muted); padding-bottom: 4px; }
-.divider { width: 1px; background: #c8c6c4; height: 60px; align-self: center; margin: 0 4px; }
+#notebook-container {
+    position: absolute; top: 60px; left: 0; right: 0; bottom: 0;
+}
 
-/* --- BUTTONS --- */
-.ribbon-btn { background: transparent; border: 1px solid transparent; border-radius: 4px; color: var(--ms-text); font-size: 12px; padding: 6px 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 50px; transition: 0.1s; }
-.ribbon-btn:hover { background: var(--ms-ribbon-hover); }
-.ribbon-btn.active { background: var(--ms-ribbon-active); border: 1px solid #8a8886; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1); }
-.ribbon-btn svg { stroke-width: 1.2; color: var(--ms-text); }
-.ribbon-btn.highlight svg { color: var(--ms-blue); stroke-width: 2; }
-.ribbon-btn.danger:hover { background: #fde7e9; color: #a1260d; }
-.ribbon-btn.danger:hover svg { color: #a1260d; }
-.ribbon-btn.disabled { opacity: 0.4; cursor: not-allowed; }
+#scroll-wrapper {
+    width: 100%; height: 100%;
+    overflow: auto; /* Allow X and Y scroll for panning */
+}
 
-/* --- CONTROLS --- */
-.control-stack { display: flex; flex-direction: column; gap: 6px; font-size: 11px; }
-.combo-stack { gap: 2px; }
-.slider-row { display: flex; align-items: center; gap: 6px; }
-.dropdown-row { display: flex; align-items: center; gap: 6px; }
-.tiny-icon { width: 12px; height: 12px; color: var(--ms-text-muted); }
-.val-display { width: 16px; text-align: right; }
+/* --- THE CONTINUOUS PAGE STACK (Object Style) --- */
+#page-stack {
+    display: flex; flex-direction: column; align-items: center;
+    padding: calc(40px * var(--zoom));
+    gap: calc(40px * var(--zoom));
+    min-width: 100%; /* Ensures horizontal scrolling works when zoomed in */
+}
 
-.combo-box { background: white; border: 1px solid #8a8886; border-radius: 2px; padding: 2px 6px; font-size: 11px; cursor: pointer; color: var(--ms-text); }
-.combo-box.wide { width: 100px; padding: 4px 6px; }
+.a4-page-container {
+    width: calc(94vw * var(--zoom)); /* Perfect width for iPad screens */
+    max-width: calc(1123px * var(--zoom)); /* Caps at A4 size on huge desktop monitors */
+    aspect-ratio: 1.414 / 1;
+    background-color: white;
+    box-shadow: 0px 8px 30px rgba(0,0,0,0.15); /* Makes it look like physical paper floating */
+    border-radius: 8px; /* Slight rounded corners */
+    position: relative;
+    flex-shrink: 0;
+}
 
-.color-picker-wrapper { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.color-icon { width: 16px; height: 16px; }
-.color-swatch { -webkit-appearance: none; border: 1px solid #8a8886; width: 24px; height: 8px; border-radius: 2px; cursor: pointer; padding: 0; }
-.color-swatch::-webkit-color-swatch-wrapper { padding: 0; }
-.color-swatch::-webkit-color-swatch { border: none; }
+/* Dark Mode Support */
+.theme-black body, .theme-black #notebook-container, .theme-black #scroll-wrapper { background-color: #121212; }
+.theme-black .a4-page-container { background-color: #1e1e1e; box-shadow: 0px 10px 30px rgba(0,0,0,0.8); }
 
-/* --- WORKSPACE --- */
-#scroll-wrapper { flex-grow: 1; overflow-y: auto; overflow-x: hidden; position: relative; padding: 20px 0 40px 0; }
-#notebook-container { width: 100%; display: flex; justify-content: center; transform-origin: top center; transform: scale(var(--zoom)); transition: transform 0.1s ease-out; }
-#page-stack { display: flex; flex-direction: column; gap: 30px; }
-
-/* Office 365 Page Shadow */
-.a4-page-container { width: 1123px; height: 794px; background: white; box-shadow: 0 1.6px 3.6px 0 rgba(0,0,0,0.132), 0 0.3px 0.9px 0 rgba(0,0,0,0.108); position: relative; overflow: hidden; border: 1px solid #edebe9; }
-.theme-black .a4-page-container { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.5); border-color: #333; }
+.page-text-layer {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    padding: 40px; font-size: 18px; line-height: 1.6; color: #000;
+    outline: none; z-index: 10; white-space: pre-wrap; overflow: hidden;
+}
 .theme-black .page-text-layer { color: #e0e0e0; }
 
-.page-text-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; padding: 80px 100px; font-size: 16px; outline: none; white-space: pre-wrap; word-wrap: break-word; overflow-y: hidden; line-height: 1.5; cursor: text; }
-.page-ink-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; pointer-events: none; touch-action: auto; }
+.page-ink-layer {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    z-index: 20; touch-action: none; pointer-events: auto;
+}
 
-/* SMART TOOL LOGIC: Intercept clicks only when a draw tool is active */
-.canvas-active .page-ink-layer { pointer-events: auto; touch-action: none; }
+#notebook-container.text-mode-active .page-ink-layer { pointer-events: none; }
 
-/* --- STATUS BAR --- */
-.status-bar { height: 24px; background: var(--ms-ribbon-bg); border-top: 1px solid #c8c6c4; display: flex; justify-content: space-between; align-items: center; padding: 0 12px; font-size: 11px; color: var(--ms-text-muted); flex-shrink: 0; z-index: 100; }
-.status-left, .status-right { display: flex; align-items: center; gap: 8px; }
-.status-left svg, .status-right svg { width: 12px; height: 12px; }
-.status-divider { color: #c8c6c4; }
-.status-right input[type=range] { width: 100px; }
-
-/* --- MODALS --- */
-.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.modal-overlay.hidden { display: none; }
-.modal-box { background: white; padding: 24px; border-radius: 4px; box-shadow: 0 12px 36px rgba(0,0,0,0.15); text-align: center; border: 1px solid #c8c6c4; }
-.modal-box h3 { margin: 0 0 10px 0; font-weight: 400; color: var(--ms-blue); display: flex; align-items: center; justify-content: center; gap: 8px; }
-.modal-box input { width: 100%; margin: 15px 0; padding: 6px; text-align: center; background: var(--ms-ribbon-bg); border: 1px solid #c8c6c4; border-radius: 2px; }
-.standard-btn { background: var(--ms-ribbon-bg); border: 1px solid #8a8886; padding: 6px 16px; border-radius: 2px; cursor: pointer; }
-.standard-btn:hover { background: var(--ms-ribbon-hover); }
-
-/* --- MICROSOFT WORD-STYLE WELCOME CONTAINER --- */
-.welcome-card { margin: 60px auto; width: 580px; background: #ffffff; border: 1px solid #c8c6c4; border-radius: 6px; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04); display: flex; flex-direction: column; animation: fadeInWelcome 0.3s ease-out; }
-@keyframes fadeInWelcome { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-.welcome-header { background: var(--ms-blue); color: #ffffff; padding: 30px; text-align: center; border-top-left-radius: 5px; border-top-right-radius: 5px; }
-.welcome-logo { width: 44px !important; height: 44px !important; margin-bottom: 12px; opacity: 0.95; }
-.welcome-header h2 { margin: 0; font-size: 24px; font-weight: 400; letter-spacing: 0.5px; }
-.welcome-header p { margin: 6px 0 0 0; font-size: 13px; opacity: 0.75; }
-.welcome-body { padding: 35px; display: flex; flex-direction: column; gap: 25px; }
-.welcome-instruction { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ms-text-muted); text-align: center; }
-.welcome-actions { display: flex; flex-direction: column; gap: 12px; }
-.welcome-action-btn { background: #ffffff; border: 1px solid #8a8886; border-radius: 4px; padding: 12px 20px; font-size: 13px; font-weight: 600; color: var(--ms-text); cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: all 0.15s ease; }
-.welcome-action-btn:hover { background: var(--ms-ribbon-bg); border-color: #605e5c; }
-.welcome-action-btn.primary { background: #deecf9; border-color: var(--ms-blue); color: var(--ms-blue); }
-.welcome-action-btn.primary:hover { background: #c7e0f4; }
-.welcome-footer { border-top: 1px solid #edebe9; padding: 12px 20px; background: #f3f2f1; display: flex; justify-content: space-between; font-size: 11px; color: var(--ms-text-muted); border-bottom-left-radius: 5px; border-bottom-right-radius: 5px; }
+.modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); display: flex; justify-content: center; align-items: center; z-index: 2000; }
+.modal.hidden { display: none; }
+.modal-content { background: white; padding: 30px; border-radius: 16px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.25); width: 350px; }
+#qrcode { margin: 20px auto; display: flex; justify-content: center; padding: 15px; background: white; border-radius: 8px; border: 1px solid #eee; }
